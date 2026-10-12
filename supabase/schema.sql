@@ -51,9 +51,12 @@ create table if not exists public.polls (
   source text not null,
   poll_date timestamptz not null,
   poll_type text not null default 'poll',
+  source_key text,
   raw_data jsonb not null default '{}'::jsonb,
   created_at timestamptz default now()
 );
+
+alter table public.polls add column if not exists source_key text;
 
 create table if not exists public.election_results (
   id uuid primary key default gen_random_uuid(),
@@ -64,26 +67,28 @@ create table if not exists public.election_results (
 );
 
 create index if not exists idx_poll_date on public.polls(poll_date);
+create unique index if not exists idx_polls_source_key on public.polls(source_key);
 create index if not exists idx_league_members_league on public.league_members(league_id);
 create index if not exists idx_user_bets_league on public.user_bets(league_id);
 
 insert into public.parties (name, leader, is_threshold_risk, poll_average, sort_order)
 values
-  ('ישר!', 'גדי איזנקוט', false, 7.4, 1),
-  ('הליכוד', 'בנימין נתניהו', false, 34.1, 2),
-  ('ביחד', 'נפתלי בנט', false, 11.8, 3),
-  ('ישראל ביתנו', 'אביגדור ליברמן', false, 10.3, 4),
-  ('הדמוקרטים', 'יאיר גולן', false, 6.1, 5),
-  ('הרשימה המשותפת / חד"ש-תע"ל', 'יוסף ג׳בארין', false, 5.9, 6),
-  ('יהדות התורה', 'יעקב אשר', false, 8.2, 7),
-  ('ש"ס', 'אריה דרעי', false, 10.1, 8),
-  ('עוצמה יהודית', 'איתמר בן גביר', false, 8.9, 9),
-  ('הציונות הדתית', 'בצלאל סמוטריץ׳ ומשה פייגלין', false, 7.6, 10),
-  ('רע"ם', 'מנסור עבאס ויואב סגלוביץ׳', false, 5.2, 11),
-  ('המילואימניקים', 'יועז הנדל וירון זליכה', false, 3.6, 12),
-  ('עמך ישראל', 'עופר וינטר', true, 2.4, 13),
+  -- party names must match the scraper's canonical names (scripts/poll-source.mjs)
+  ('ישר!', 'גדי איזנקוט', false, 22.3, 1),
+  ('הליכוד', 'בנימין נתניהו', false, 22.7, 2),
+  ('ביחד', 'נפתלי בנט', false, 11.5, 3),
+  ('ישראל ביתנו', 'אביגדור ליברמן', false, 7.9, 4),
+  ('הדמוקרטים', 'יאיר גולן', false, 9.2, 5),
+  ('הרשימה המשותפת', 'יוסף ג׳בארין', false, 7.3, 6),
+  ('יהדות התורה', 'יעקב אשר', false, 7.6, 7),
+  ('ש"ס', 'אריה דרעי', false, 8.0, 8),
+  ('עוצמה יהודית', 'איתמר בן גביר', false, 7.6, 9),
+  ('הציונות הדתית וזהות', 'בצלאל סמוטריץ׳ ומשה פייגלין', false, 5.9, 10),
+  ('רע"ם', 'מנסור עבאס ויואב סגלוביץ׳', false, 5.1, 11),
+  ('המילואימניקים והכלכלה החדשה', 'יועז הנדל וירון זליכה', false, 4.1, 12),
+  ('עמך ישראל', 'עופר וינטר', true, 4.3, 13),
   ('הציבור החרדי', 'מוטי לייטנר', true, 1.8, 14),
-  ('כחול לבן', 'בני גנץ', true, 1.2, 15)
+  ('כחול לבן', 'בני גנץ', true, 4.0, 15)
 on conflict do nothing;
 
 -- Helper view for leaderboard

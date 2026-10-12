@@ -3,11 +3,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, BarChart3, ChevronDown, Crown, Flame, Gauge, Lock, Medal, Search, ShieldCheck, Trophy, Wallet } from 'lucide-react';
 import AccountLeaguePanel from '@/components/account-league-panel';
-import { mockParties, mockPolls } from '@/lib/mock-data';
-import type { Party } from '@/lib/types';
+import { mockParties } from '@/lib/mock-data';
+import type { Party, Poll } from '@/lib/types';
 
 const TOTAL_SEATS = 120;
-const LOCK_DATE = new Date('2026-10-26T23:59:59+03:00');
+const FALLBACK_LOCK_DATETIME = '2026-10-26T23:59:59+03:00';
+
+function resolveLockDate() {
+  const configured = process.env.NEXT_PUBLIC_LOCK_DATETIME?.trim();
+  const candidate = configured ? new Date(configured) : null;
+  if (candidate && !Number.isNaN(candidate.getTime())) return candidate;
+  return new Date(FALLBACK_LOCK_DATETIME);
+}
+
+const LOCK_DATE = resolveLockDate();
 
 type TabKey = 'bet' | 'polls' | 'group' | 'admin';
 type FilterMode = 'poll' | 'source' | 'party';
@@ -19,19 +28,24 @@ export default function HomePage() {
   const [selectedPollId, setSelectedPollId] = useState<string>('all');
   const [selectedSource, setSelectedSource] = useState<string>('all');
   const [selectedParty, setSelectedParty] = useState<string>('all');
+  const [polls, setPolls] = useState<Poll[]>([]);
+  const [pollAggregate, setPollAggregate] = useState<Record<string, number>>({});
+  const [pollSourceMode, setPollSourceMode] = useState<'stored' | 'live'>('live');
+  const [pollsLoading, setPollsLoading] = useState(true);
+  const [pollsError, setPollsError] = useState(false);
   const [bet, setBet] = useState<Record<string, number>>({
     'ישר!': 8,
     'הליכוד': 32,
     'ביחד': 12,
     'ישראל ביתנו': 10,
     'הדמוקרטים': 6,
-    'הרשימה המשותפת / חד"ש-תע"ל': 6,
+    'הרשימה המשותפת': 6,
     'יהדות התורה': 8,
     'ש"ס': 11,
     'עוצמה יהודית': 8,
-    'הציונות הדתית': 9,
+    'הציונות הדתית וזהות': 9,
     'רע"ם': 7,
-    'המילואימניקים': 3,
+    'המילואימניקים והכלכלה החדשה': 3,
     'עמך ישראל': 0,
     'הציבור החרדי': 0,
     'כחול לבן': 0,
@@ -49,10 +63,36 @@ export default function HomePage() {
 
   const countdown = useCountdown(LOCK_DATE);
 
-  const allSources = Array.from(new Set(mockPolls.map((poll) => poll.source)));
-  const partyNames = mockParties.map((party) => party.name);
+  useEffect(() => {
+    let isCurrent = true;
 
-  const filteredPolls = mockPolls.filter((poll) => {
+    fetch('/api/polls')
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Poll request failed');
+        return response.json();
+      })
+      .then((data: { polls: Poll[]; aggregate: Record<string, number>; sourceMode: 'stored' | 'live' }) => {
+        if (!isCurrent) return;
+        setPolls(data.polls);
+        setPollAggregate(data.aggregate);
+        setPollSourceMode(data.sourceMode);
+      })
+      .catch(() => {
+        if (isCurrent) setPollsError(true);
+      })
+      .finally(() => {
+        if (isCurrent) setPollsLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
+
+  const allSources = Array.from(new Set(polls.map((poll) => poll.source)));
+  const partyNames = Array.from(new Set(polls.flatMap((poll) => poll.parties.map((party) => party.name))));
+
+  const filteredPolls = polls.filter((poll) => {
     if (filterMode === 'source') {
       return selectedSource === 'all' || poll.source === selectedSource;
     }
@@ -65,26 +105,15 @@ export default function HomePage() {
   });
 
   const selectedPollDetails =
-    selectedPollId !== 'all' ? mockPolls.find((poll) => poll.id === selectedPollId) ?? null : filteredPolls[0] ?? null;
+    selectedPollId !== 'all' ? polls.find((poll) => poll.id === selectedPollId) ?? null : filteredPolls[0] ?? null;
 
   const selectedPartyResults =
     selectedParty !== 'all'
-      ? mockPolls.map((poll) => {
+      ? polls.map((poll) => {
           const match = poll.parties.find((party) => party.name === selectedParty);
-          return { poll: poll.source, seats: match?.seats ?? null, date: poll.date };
+          return { id: poll.id, poll: poll.source, seats: match?.seats ?? null, date: poll.date };
         })
       : [];
-
-  const chartData =
-    selectedPollDetails?.parties ??
-    (selectedParty !== 'all'
-      ? mockPolls
-          .filter((poll) => poll.parties.some((party) => party.name === selectedParty))
-          .map((poll) => ({
-            name: poll.source,
-            value: poll.parties.find((party) => party.name === selectedParty)?.seats ?? 0,
-          }))
-      : []);
 
   const updateSeatValue = (partyName: string, value: number) => {
     const numericValue = Number.isFinite(value) ? value : 0;
@@ -159,6 +188,12 @@ export default function HomePage() {
                 <span className="text-2xl font-black text-blue-950">{remaining}</span>
                 <span className="text-sm text-blue-800">מתוך 120</span>
               </div>
+              {polls[0]?.lastChecked && (
+                <p className="mt-2 text-center text-[11px] text-cyan-800">
+                  {pollSourceMode === 'live' ? 'נתונים חיים שנשלפו ' : 'נבדק לאחרונה '}
+                  {new Date(polls[0].lastChecked).toLocaleString('he-IL')}
+                </p>
+              )}
             </div>
 
             <div className="space-y-3">
@@ -166,6 +201,7 @@ export default function HomePage() {
                 <PartyCard
                   key={party.name}
                   party={party}
+                  average={pollAggregate[party.name]}
                   value={bet[party.name] ?? 0}
                   onChange={updateSeatValue}
                 />
@@ -188,6 +224,7 @@ export default function HomePage() {
                     <PartyCard
                       key={party.name}
                       party={party}
+                      average={pollAggregate[party.name]}
                       value={bet[party.name] ?? 0}
                       onChange={updateSeatValue}
                     />
@@ -216,9 +253,9 @@ export default function HomePage() {
                 <Flame className="h-4 w-4 text-cyan-600" />
               </div>
               <div className="grid grid-cols-3 gap-2 text-center">
-                <MiniStat label="ישר!" value="7.4" />
-                <MiniStat label="הליכוד" value="34.1" />
-                <MiniStat label="ביחד" value="11.8" />
+                <MiniStat label="ישר!" value={pollAggregate['ישר!']?.toFixed(1) ?? '—'} />
+                <MiniStat label="הליכוד" value={pollAggregate['הליכוד']?.toFixed(1) ?? '—'} />
+                <MiniStat label="ביחד" value={pollAggregate['ביחד']?.toFixed(1) ?? '—'} />
               </div>
             </div>
 
@@ -245,7 +282,7 @@ export default function HomePage() {
                     className="col-span-2 rounded-xl border border-blue-200 bg-sky-50 px-2 py-2 text-sm text-slate-700"
                   >
                     <option value="all">כל הסקרים</option>
-                    {mockPolls.map((poll) => (
+                    {polls.map((poll) => (
                       <option key={poll.id} value={poll.id}>{poll.source}</option>
                     ))}
                   </select>
@@ -281,17 +318,34 @@ export default function HomePage() {
 
             {(filterMode === 'poll' || filterMode === 'source') && (
               <div className="space-y-3">
-                {filteredPolls.map((poll) => {
-                  const pollParties = mockParties.map((party) => ({
-                    name: party.name,
-                    seats: poll.parties.find((result) => result.name === party.name)?.seats ?? null,
-                  }));
+                {pollsLoading ? (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">טוען סקרים...</div>
+                ) : pollsError ? (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">לא ניתן לטעון סקרים כרגע.</div>
+                ) : filteredPolls.length === 0 ? (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">אין סקרים זמינים להצגה.</div>
+                ) : filteredPolls.map((poll) => {
+                    const pollParties = poll.parties;
                   const maxValue = Math.max(...pollParties.map((party) => party.seats ?? 0), 1);
                   return (
                     <article key={poll.id} className="rounded-2xl border border-slate-200 bg-white p-3">
-                      <div className="mb-3 flex items-center justify-between">
-                        <span className="text-sm font-bold text-slate-800">{poll.source}</span>
-                        <span className="text-xs text-slate-500">{poll.date}</span>
+                        <div className="mb-3 flex items-start justify-between gap-3">
+                          <div>
+                            <span className="text-sm font-bold text-slate-800">{poll.source}</span>
+                            {(poll.pollingFirm || poll.sampleSize) && (
+                              <p className="mt-1 text-xs text-slate-500">
+                                {[poll.pollingFirm, poll.sampleSize ? `מדגם ${poll.sampleSize}` : null].filter(Boolean).join(' · ')}
+                              </p>
+                            )}
+                          </div>
+                          <div className="text-left">
+                            <span className="text-xs text-slate-500">{poll.date}</span>
+                            {poll.sourceUrl && (
+                              <a className="mt-1 block text-xs font-medium text-blue-700 underline" href={poll.sourceUrl} target="_blank" rel="noreferrer">
+                                לכתבה המקורית
+                              </a>
+                            )}
+                          </div>
                       </div>
 
                       <div className="space-y-2">
@@ -320,6 +374,10 @@ export default function HomePage() {
               </div>
             )}
 
+            <p className="text-center text-xs text-slate-500">
+              מאגר הנתונים: <a className="text-blue-700 underline" href="https://en.wikipedia.org/wiki/Opinion_polling_for_the_2026_Israeli_legislative_election" target="_blank" rel="noreferrer">Wikipedia</a>. בכל סקר מופיע קישור לפרסום המקורי.
+            </p>
+
             {filterMode === 'party' && (
               <div className="space-y-3">
                 {selectedParty === 'all' ? (
@@ -337,7 +395,7 @@ export default function HomePage() {
 
                     <div className="space-y-3">
                       {selectedPartyResults.map((item) => (
-                        <div key={`${item.poll}-${item.date}`} className="rounded-2xl border border-slate-200 bg-white p-3">
+                        <div key={item.id} className="rounded-2xl border border-slate-200 bg-white p-3">
                           <div className="mb-2 flex items-center justify-between">
                             <span className="text-sm font-bold text-slate-800">{item.poll}</span>
                             <span className="text-xs text-slate-500">{item.date}</span>
@@ -402,8 +460,9 @@ export default function HomePage() {
   );
 }
 
-function PartyCard({ party, value, onChange }: { party: Party; value: number; onChange: (name: string, nextValue: number) => void }) {
+function PartyCard({ party, average, value, onChange }: { party: Party; average?: number; value: number; onChange: (name: string, nextValue: number) => void }) {
   const inputValue = Number.isFinite(value) ? value : 0;
+  const displayAverage = typeof average === 'number' ? average.toFixed(1) : party.pollAverage.toFixed(1);
 
   return (
     <div className="rounded-2xl border border-blue-200 bg-white p-3 shadow-sm ring-1 ring-blue-50">
@@ -413,7 +472,7 @@ function PartyCard({ party, value, onChange }: { party: Party; value: number; on
           <p className="text-[11px] text-slate-500">{party.leader}</p>
         </div>
         <div className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-medium text-blue-800 ring-1 ring-blue-100">
-          {party.pollAverage} מנדטים
+          {displayAverage} מנדטים
         </div>
       </div>
 
@@ -450,7 +509,7 @@ function PartyCard({ party, value, onChange }: { party: Party; value: number; on
         </div>
         <div className="text-left">
           <p className="text-[10px] text-slate-500">ממוצע סקרים</p>
-          <p className="text-sm font-bold text-slate-800">{party.pollAverage}</p>
+          <p className="text-sm font-bold text-slate-800">{displayAverage}</p>
         </div>
       </div>
     </div>

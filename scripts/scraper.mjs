@@ -1,56 +1,47 @@
 import { createClient } from '@supabase/supabase-js';
+import { fetchRecentPolls } from './poll-source.mjs';
 
-const pollSources = [
-  'ערוץ 11',
-  'ערוץ 12',
-  'ערוץ 13',
-  'ערוץ 14',
-  'Wikipedia',
-];
+async function persistPolls(polls) {
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const mockResults = [
-  { source: 'ערוץ 11', date: '2026-10-08T08:00:00+03:00', parties: { 'הליכוד': 32, 'ש"ס': 11, 'ביחד': 12, 'ישראל ביתנו': 10 } },
-  { source: 'ערוץ 12', date: '2026-10-08T08:00:00+03:00', parties: { 'הליכוד': 34, 'ביחד': 13, 'ש"ס': 10, 'ישראל ביתנו': 9 } },
-  { source: 'ערוץ 13', date: '2026-10-08T08:00:00+03:00', parties: { 'הליכוד': 33, 'ביחד': 11, 'ש"ס': 11, 'ישראל ביתנו': 9 } },
-  { source: 'ערוץ 14', date: '2026-10-08T08:00:00+03:00', parties: { 'הליכוד': 35, 'ביחד': 12, 'ש"ס': 10, 'ישראל ביתנו': 10 } },
-];
-
-const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
-
-async function persistPolls(data) {
-  if (!supabase) {
-    console.log('No Supabase credentials detected. Using mock mode.');
-    console.log(JSON.stringify(data, null, 2));
-    return;
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error('Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to write polls');
   }
 
-  const { error } = await supabase.from('polls').insert(
-    data.map((entry) => ({
-      source: entry.source,
-      poll_date: new Date(entry.date).toISOString(),
-      poll_type: 'poll',
-      raw_data: entry.parties,
-    })),
-  );
+  const supabase = createClient(supabaseUrl, serviceRoleKey);
+  const records = polls.map((poll) => ({
+    source: poll.source,
+    poll_date: `${poll.date}T12:00:00.000Z`,
+    poll_type: 'poll',
+    source_key: poll.sourceKey,
+    raw_data: { ...poll.rawData, fetchedAt: new Date().toISOString() },
+  }));
 
-  if (error) {
-    console.error('Supabase insert failed:', error.message);
-  } else {
-    console.log('Polls stored to Supabase successfully.');
-  }
+  const { error } = await supabase.from('polls').upsert(records, { onConflict: 'source_key' });
+  if (error) throw new Error(`Supabase upsert failed: ${error.message}`);
 }
 
 async function main() {
-  const snapshot = mockResults.map((entry) => ({
-    ...entry,
-    source: pollSources.includes(entry.source) ? entry.source : 'Wikipedia',
+  const polls = await fetchRecentPolls();
+  const dryRun = process.argv.includes('--dry-run');
+  const preview = polls.slice(0, 10).map(({ source, date, rawData }) => ({
+    source,
+    date,
+    pollingFirm: rawData.pollingFirm,
+    sampleSize: rawData.sampleSize,
+    sourceUrl: rawData.sourceUrl,
+    parties: rawData.parties,
   }));
 
-  await persistPolls(snapshot);
-  console.log('Scrape finished.');
+  console.log(JSON.stringify({ count: polls.length, preview }, null, 2));
+  if (dryRun) {
+    console.log('Dry run only. No database writes were made.');
+    return;
+  }
+
+  await persistPolls(polls);
+  console.log(`Stored ${polls.length} recent polls.`);
 }
 
 main().catch((error) => {
