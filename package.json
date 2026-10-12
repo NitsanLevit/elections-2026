@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "build": "next build && node scripts/copy-standalone-assets.mjs",
+    "start": "node -e \"process.env.HOSTNAME='0.0.0.0'; require('./.next/standalone/server.js')\"",
     "lint": "next lint",
     "scrape": "node scripts/scraper.mjs"
   },

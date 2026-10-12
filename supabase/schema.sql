@@ -87,7 +87,7 @@ values
 on conflict do nothing;
 
 -- Helper view for leaderboard
-create or replace view public.leaderboard_snapshot as
+create or replace view public.leaderboard_snapshot with (security_invoker = true) as
 select
   ub.user_id,
   p.nickname,
@@ -97,3 +97,211 @@ select
   ub.bet_json
 from public.user_bets ub
 left join public.profiles p on p.id = ub.user_id;
+
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  insert into public.profiles (id, nickname)
+  values (
+    new.id,
+    coalesce(
+      nullif(btrim(new.raw_user_meta_data ->> 'nickname'), ''),
+      nullif(split_part(coalesce(new.email, ''), '@', 1), ''),
+      'משתמש'
+    )
+  )
+  on conflict (id) do nothing;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+create or replace function public.is_league_member(target_league uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.league_members as membership
+    where membership.league_id = target_league
+      and membership.user_id = (select auth.uid())
+  );
+$$;
+
+create or replace function public.create_league(p_name text)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  new_league_id uuid;
+begin
+  if (select auth.uid()) is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if length(btrim(coalesce(p_name, ''))) < 2 or length(btrim(p_name)) > 50 then
+    raise exception 'League name must be between 2 and 50 characters';
+  end if;
+
+  insert into public.leagues (name, invite_code, created_by)
+  values (
+    btrim(p_name),
+    upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8)),
+    (select auth.uid())
+  )
+  returning id into new_league_id;
+
+  insert into public.league_members (league_id, user_id)
+  values (new_league_id, (select auth.uid()));
+
+  return new_league_id;
+end;
+$$;
+
+create or replace function public.join_league_by_code(p_invite_code text)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  target_league_id uuid;
+begin
+  if (select auth.uid()) is null then
+    raise exception 'Authentication required';
+  end if;
+
+  select league.id
+    into target_league_id
+    from public.leagues as league
+    where upper(league.invite_code) = upper(btrim(coalesce(p_invite_code, '')))
+    limit 1;
+
+  if target_league_id is null then
+    raise exception 'Invite code not found';
+  end if;
+
+  insert into public.league_members (league_id, user_id)
+  values (target_league_id, (select auth.uid()))
+  on conflict (league_id, user_id) do nothing;
+
+  return target_league_id;
+end;
+$$;
+
+revoke all on function public.handle_new_user() from public, anon, authenticated;
+revoke all on function public.is_league_member(uuid) from public, anon;
+revoke all on function public.create_league(text) from public, anon;
+revoke all on function public.join_league_by_code(text) from public, anon;
+grant execute on function public.is_league_member(uuid) to authenticated;
+grant execute on function public.create_league(text) to authenticated;
+grant execute on function public.join_league_by_code(text) to authenticated;
+
+revoke all on public.profiles, public.leagues, public.league_members,
+  public.parties, public.user_bets, public.polls, public.election_results
+  from anon, authenticated;
+revoke all on public.leaderboard_snapshot from anon, authenticated;
+
+alter table public.profiles enable row level security;
+alter table public.leagues enable row level security;
+alter table public.league_members enable row level security;
+alter table public.parties enable row level security;
+alter table public.user_bets enable row level security;
+alter table public.polls enable row level security;
+alter table public.election_results enable row level security;
+
+drop policy if exists profiles_select_own on public.profiles;
+create policy profiles_select_own on public.profiles
+  for select to authenticated
+  using (id = (select auth.uid()));
+
+drop policy if exists profiles_update_own on public.profiles;
+create policy profiles_update_own on public.profiles
+  for update to authenticated
+  using (id = (select auth.uid()))
+  with check (id = (select auth.uid()));
+
+drop policy if exists leagues_select_member on public.leagues;
+create policy leagues_select_member on public.leagues
+  for select to authenticated
+  using (public.is_league_member(id));
+
+drop policy if exists league_members_select_member on public.league_members;
+create policy league_members_select_member on public.league_members
+  for select to authenticated
+  using (user_id = (select auth.uid()) or public.is_league_member(league_id));
+
+drop policy if exists parties_public_read on public.parties;
+create policy parties_public_read on public.parties
+  for select to anon, authenticated
+  using (true);
+
+drop policy if exists polls_public_read on public.polls;
+create policy polls_public_read on public.polls
+  for select to anon, authenticated
+  using (true);
+
+drop policy if exists election_results_public_read on public.election_results;
+create policy election_results_public_read on public.election_results
+  for select to anon, authenticated
+  using (true);
+
+drop policy if exists user_bets_select_own_or_revealed on public.user_bets;
+create policy user_bets_select_own_or_revealed on public.user_bets
+  for select to authenticated
+  using (
+    user_id = (select auth.uid())
+    or (
+      league_id is not null
+      and public.is_league_member(league_id)
+      and statement_timestamp() >= '2026-10-27T08:00:00+03:00'::timestamptz
+    )
+  );
+
+drop policy if exists user_bets_insert_own_before_lock on public.user_bets;
+create policy user_bets_insert_own_before_lock on public.user_bets
+  for insert to authenticated
+  with check (
+    user_id = (select auth.uid())
+    and league_id is not null
+    and public.is_league_member(league_id)
+    and statement_timestamp() < '2026-10-26T23:59:59+03:00'::timestamptz
+  );
+
+drop policy if exists user_bets_update_own_before_lock on public.user_bets;
+create policy user_bets_update_own_before_lock on public.user_bets
+  for update to authenticated
+  using (
+    user_id = (select auth.uid())
+    and league_id is not null
+    and public.is_league_member(league_id)
+    and statement_timestamp() < '2026-10-26T23:59:59+03:00'::timestamptz
+  )
+  with check (
+    user_id = (select auth.uid())
+    and league_id is not null
+    and public.is_league_member(league_id)
+    and statement_timestamp() < '2026-10-26T23:59:59+03:00'::timestamptz
+  );
+
+grant select, update (nickname, avatar_url) on public.profiles to authenticated;
+grant select on public.leagues, public.league_members to authenticated;
+grant select on public.parties, public.polls, public.election_results to anon, authenticated;
+grant select on public.user_bets to authenticated;
+grant insert (user_id, league_id, submitted_at, bet_json),
+  update (submitted_at, bet_json) on public.user_bets to authenticated;
+grant select on public.leaderboard_snapshot to authenticated;

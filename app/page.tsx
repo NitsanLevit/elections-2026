@@ -1,8 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { AlertTriangle, BarChart3, ChevronDown, Crown, Flame, Gauge, Lock, Medal, Search, ShieldCheck, Trophy, Users, Wallet } from 'lucide-react';
-import { mockParties, mockPolls, mockLeaderboard } from '@/lib/mock-data';
+import { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, BarChart3, ChevronDown, Crown, Flame, Gauge, Lock, Medal, Search, ShieldCheck, Trophy, Wallet } from 'lucide-react';
+import AccountLeaguePanel from '@/components/account-league-panel';
+import { mockParties, mockPolls } from '@/lib/mock-data';
 import type { Party } from '@/lib/types';
 
 const TOTAL_SEATS = 120;
@@ -68,12 +69,10 @@ export default function HomePage() {
 
   const selectedPartyResults =
     selectedParty !== 'all'
-      ? mockPolls
-          .filter((poll) => poll.parties.some((party) => party.name === selectedParty))
-          .map((poll) => {
-            const match = poll.parties.find((party) => party.name === selectedParty);
-            return { poll: poll.source, seats: match?.seats ?? 0, date: poll.date };
-          })
+      ? mockPolls.map((poll) => {
+          const match = poll.parties.find((party) => party.name === selectedParty);
+          return { poll: poll.source, seats: match?.seats ?? null, date: poll.date };
+        })
       : [];
 
   const chartData =
@@ -124,27 +123,7 @@ export default function HomePage() {
           </div>
         </header>
 
-        <div className="border-b border-blue-100 bg-sky-50 px-4 py-3">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-blue-700" />
-              <span className="text-sm font-medium text-blue-800">ליגה</span>
-            </div>
-            <button className="rounded-full bg-white px-3 py-1 text-xs font-medium text-blue-800 shadow-sm ring-1 ring-blue-200">
-              משפחה · קוד: FAM-2026
-            </button>
-          </div>
-
-          <div className="flex items-center justify-between rounded-2xl border border-blue-200 bg-white px-3 py-2">
-            <div>
-              <p className="text-xs text-slate-500">סטטוס</p>
-              <p className="text-sm font-semibold text-slate-800">בטטה · נצמד</p>
-            </div>
-            <div className="rounded-full bg-cyan-100 px-2 py-1 text-xs font-medium text-cyan-800">
-              {countdown.locked ? 'נעול' : 'פתוח'}
-            </div>
-          </div>
-        </div>
+        <AccountLeaguePanel />
 
         <div className="border-b border-blue-100 bg-white px-4 py-3">
           <div className="flex gap-2 overflow-x-auto pb-1">
@@ -303,7 +282,11 @@ export default function HomePage() {
             {(filterMode === 'poll' || filterMode === 'source') && (
               <div className="space-y-3">
                 {filteredPolls.map((poll) => {
-                  const maxValue = Math.max(...poll.parties.map((party) => party.seats), 1);
+                  const pollParties = mockParties.map((party) => ({
+                    name: party.name,
+                    seats: poll.parties.find((result) => result.name === party.name)?.seats ?? null,
+                  }));
+                  const maxValue = Math.max(...pollParties.map((party) => party.seats ?? 0), 1);
                   return (
                     <article key={poll.id} className="rounded-2xl border border-slate-200 bg-white p-3">
                       <div className="mb-3 flex items-center justify-between">
@@ -312,18 +295,22 @@ export default function HomePage() {
                       </div>
 
                       <div className="space-y-2">
-                        {poll.parties.map((party) => (
+                        {pollParties.map((party) => (
                           <div key={`${poll.id}-${party.name}`}>
                             <div className="mb-1 flex items-center justify-between text-xs text-slate-600">
                               <span>{party.name}</span>
-                              <span className="font-bold text-slate-800">{party.seats}</span>
+                              <span className={party.seats === null ? 'text-slate-400' : 'font-bold text-slate-800'}>
+                                {party.seats ?? 'לא פורסם'}
+                              </span>
                             </div>
-                            <div className="h-2 w-full overflow-hidden rounded-full bg-sky-100">
-                              <div
-                                className="h-full rounded-full bg-gradient-to-r from-blue-700 to-cyan-500"
-                                style={{ width: `${(party.seats / maxValue) * 100}%` }}
-                              />
-                            </div>
+                            {party.seats !== null && (
+                              <div className="h-2 w-full overflow-hidden rounded-full bg-sky-100">
+                                <div
+                                  className="h-full rounded-full bg-gradient-to-r from-blue-700 to-cyan-500"
+                                  style={{ width: `${(party.seats / maxValue) * 100}%` }}
+                                />
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -356,8 +343,14 @@ export default function HomePage() {
                             <span className="text-xs text-slate-500">{item.date}</span>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span className="text-xs text-slate-500">מנדטים</span>
-                            <span className="text-lg font-black text-blue-900">{item.seats}</span>
+                            <span className="text-xs text-slate-500">
+                              {item.seats === null ? 'לא פורסם בסקר' : 'מנדטים'}
+                            </span>
+                            {item.seats === null ? (
+                              <span className="text-sm text-slate-400">לא פורסם</span>
+                            ) : (
+                              <span className="text-lg font-black text-blue-900">{item.seats}</span>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -379,20 +372,8 @@ export default function HomePage() {
               <p className="text-sm text-slate-600">לאחר סגירת ההצבעה, כאן יוצגו כל ההימורים של חברי הקבוצה.</p>
             </div>
 
-            <div className="space-y-3">
-              {mockLeaderboard.map((entry) => (
-                <div key={entry.name} className="rounded-2xl border border-slate-200 bg-white p-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-bold text-slate-800">{entry.name}</p>
-                      <p className="text-xs text-slate-500">{entry.betPlaced ? 'הימר ✓' : 'טרם הימר ✗'}</p>
-                    </div>
-                    <span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-800">
-                      {entry.score} נקודות
-                    </span>
-                  </div>
-                </div>
-              ))}
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
+              נתוני ההימורים של חברי הקבוצה יוצגו כאן לאחר חיבור שמירת ההימורים.
             </div>
           </section>
         )}
@@ -499,8 +480,21 @@ function ClockIcon() {
 }
 
 function useCountdown(targetDate: Date) {
-  const now = new Date();
-  const difference = Math.max(targetDate.getTime() - now.getTime(), 0);
+  const [now, setNow] = useState<number | null>(null);
+
+  useEffect(() => {
+    const updateNow = () => setNow(Date.now());
+    updateNow();
+
+    const intervalId = window.setInterval(updateNow, 1000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  if (now === null) {
+    return { days: '--', hours: '--', minutes: '--', seconds: '--', locked: false };
+  }
+
+  const difference = Math.max(targetDate.getTime() - now, 0);
 
   const days = Math.floor(difference / (1000 * 60 * 60 * 24));
   const hours = Math.floor((difference / (1000 * 60 * 60)) % 24);
