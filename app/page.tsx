@@ -699,7 +699,7 @@ export default function HomePage() {
 
         {activeTab === 'results' && (
           previewMode ? (
-            <ResultsView result={mockFinalResult} entries={mockGroupBets} isPreview />
+            <ResultsView result={mockFinalResult} entries={mockGroupBets} updatedAt={new Date()} isPreview />
           ) : (
             <section className="space-y-4 bg-sky-50 p-4">
               <div className="rounded-2xl border border-blue-200 bg-white p-4">

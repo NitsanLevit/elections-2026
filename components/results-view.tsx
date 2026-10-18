@@ -1,10 +1,12 @@
 'use client';
 
-import { BarChart3, Crown, Medal, PieChart, Trophy, Users } from 'lucide-react';
+import { BarChart3, Crown, Medal, PieChart, Radio, Trophy, Users } from 'lucide-react';
 import {
   aggregateByBloc,
+  blocColor,
   groupAverage,
   rankEntries,
+  MAJORITY_SEATS,
   type BlocTotals,
   type GroupEntry,
 } from '@/lib/election-preview';
@@ -16,16 +18,29 @@ const PREDICTION_COLOR = '#eb6834';
 type ResultsViewProps = {
   result: Record<string, number>;
   entries: GroupEntry[];
+  updatedAt?: Date | string | null;
   isPreview?: boolean;
 };
 
-export default function ResultsView({ result, entries, isPreview }: ResultsViewProps) {
+function formatUpdated(value: Date | string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+export default function ResultsView({ result, entries, updatedAt, isPreview }: ResultsViewProps) {
   const ranked = rankEntries(entries, result);
   const winner = ranked[0] ?? null;
   const prediction = groupAverage(entries);
 
   const resultBlocs = aggregateByBloc(result);
   const predictionBlocs = aggregateByBloc(prediction);
+
+  const resultRows = Object.entries(result)
+    .filter(([, seats]) => seats > 0)
+    .map(([name, seats]) => ({ name, seats }))
+    .sort((a, b) => b.seats - a.seats);
+  const maxResultSeat = Math.max(1, ...resultRows.map((row) => row.seats));
 
   const partyOrder = Array.from(new Set([...Object.keys(result), ...Object.keys(prediction)]))
     .map((name) => ({ name, result: result[name] ?? 0, prediction: prediction[name] ?? 0 }))
@@ -40,6 +55,44 @@ export default function ResultsView({ result, entries, isPreview }: ResultsViewP
           מצב תצוגה מקדימה — נתוני דמה להדגמת מסך יום הבחירות. לא נתונים אמיתיים.
         </div>
       )}
+
+      {/* Real results (live) */}
+      <div className="rounded-2xl border border-blue-200 bg-white p-3 shadow-card">
+        <div className="mb-1 flex items-center justify-between">
+          <span className="text-sm font-bold text-slate-800">תוצאות אמת</span>
+          <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-600">
+            <Radio className="h-3.5 w-3.5 animate-pulse" /> חי
+          </span>
+        </div>
+        {updatedAt && (
+          <p className="mb-3 text-[11px] text-slate-500">עודכן לאחרונה: {formatUpdated(updatedAt)}</p>
+        )}
+
+        <div className="mb-2 grid grid-cols-3 gap-2 text-center">
+          {resultBlocs.map((bloc) => (
+            <div
+              key={bloc.id}
+              className={`rounded-xl bg-slate-50 p-2 ${bloc.seats >= MAJORITY_SEATS ? 'ring-2 ring-emerald-400' : ''}`}
+            >
+              <div className="text-lg font-black tabular-nums" style={{ color: bloc.color }}>{bloc.seats}</div>
+              <div className="text-[10px] text-slate-600">{bloc.name}</div>
+            </div>
+          ))}
+        </div>
+        <p className="mb-3 text-center text-[11px] text-slate-500">דרושים {MAJORITY_SEATS} מנדטים לרוב</p>
+
+        <div className="space-y-2">
+          {resultRows.map((row) => (
+            <div key={`real-${row.name}`}>
+              <div className="mb-0.5 flex items-center justify-between text-xs">
+                <span className="font-medium text-slate-700">{row.name}</span>
+                <span className="font-black tabular-nums text-slate-900">{row.seats}</span>
+              </div>
+              <Bar value={row.seats} max={maxResultSeat} color={blocColor(row.name)} />
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Winner */}
       {winner && (
@@ -230,39 +283,66 @@ function Bar({ value, max, color }: { value: number; max: number; color: string 
   );
 }
 
-function BlocDonut({ title, blocs, size = 128, stroke = 22 }: { title: string; blocs: BlocTotals; size?: number; stroke?: number }) {
+function BlocDonut({ title, blocs, size = 132, stroke = 26 }: { title: string; blocs: BlocTotals; size?: number; stroke?: number }) {
   const total = blocs.reduce((sum, bloc) => sum + bloc.seats, 0) || 1;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
-  let offset = 0;
+  const center = size / 2;
+
+  let cumulative = 0;
+  const segments = blocs.map((bloc) => {
+    const fraction = bloc.seats / total;
+    const startFraction = cumulative;
+    cumulative += fraction;
+    const length = fraction * circumference;
+    const midDeg = -90 + (startFraction + fraction / 2) * 360;
+    const midRad = (midDeg * Math.PI) / 180;
+    return {
+      ...bloc,
+      length,
+      dash: Math.max(length - 2, 0),
+      dashOffset: -startFraction * circumference,
+      fraction,
+      labelX: center + radius * Math.cos(midRad),
+      labelY: center + radius * Math.sin(midRad),
+    };
+  });
 
   return (
     <figure className="flex flex-col items-center">
       <svg viewBox={`0 0 ${size} ${size}`} className="h-28 w-28" role="img" aria-label={title}>
-        <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
-          {blocs.map((bloc) => {
-            const length = (bloc.seats / total) * circumference;
-            const dash = Math.max(length - 2, 0); // 2px gap between segments
-            const circle = (
-              <circle
-                key={bloc.id}
-                cx={size / 2}
-                cy={size / 2}
-                r={radius}
-                fill="none"
-                stroke={bloc.color}
-                strokeWidth={stroke}
-                strokeDasharray={`${dash} ${circumference - dash}`}
-                strokeDashoffset={-offset}
-              >
-                <title>{`${bloc.name}: ${bloc.seats}`}</title>
-              </circle>
-            );
-            offset += length;
-            return circle;
-          })}
+        <g transform={`rotate(-90 ${center} ${center})`}>
+          {segments.map((seg) => (
+            <circle
+              key={seg.id}
+              cx={center}
+              cy={center}
+              r={radius}
+              fill="none"
+              stroke={seg.color}
+              strokeWidth={stroke}
+              strokeDasharray={`${seg.dash} ${circumference - seg.dash}`}
+              strokeDashoffset={seg.dashOffset}
+            >
+              <title>{`${seg.name}: ${seg.seats}`}</title>
+            </circle>
+          ))}
         </g>
-        <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central" className="fill-slate-800 text-[18px] font-black">
+        {segments
+          .filter((seg) => seg.seats > 0)
+          .map((seg) => (
+            <text
+              key={`label-${seg.id}`}
+              x={seg.labelX}
+              y={seg.labelY}
+              textAnchor="middle"
+              dominantBaseline="central"
+              className="fill-white text-[12px] font-black"
+            >
+              {seg.seats}
+            </text>
+          ))}
+        <text x={center} y={center} textAnchor="middle" dominantBaseline="central" className="fill-slate-800 text-[15px] font-black">
           {total}
         </text>
       </svg>

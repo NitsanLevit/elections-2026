@@ -37,6 +37,14 @@ export function blocOf(party: string): string {
   return bloc ? bloc.id : OTHER_BLOC.id;
 }
 
+export function blocColor(party: string): string {
+  const bloc = BLOCS.find((candidate) => candidate.parties.includes(party));
+  return bloc ? bloc.color : OTHER_BLOC.color;
+}
+
+// Seats needed for a Knesset majority.
+export const MAJORITY_SEATS = 61;
+
 export function aggregateByBloc(seats: Record<string, number>): BlocTotals {
   const totals = new Map<string, number>([...BLOCS.map((bloc) => [bloc.id, 0] as const), [OTHER_BLOC.id, 0]]);
   for (const [party, value] of Object.entries(seats)) {
