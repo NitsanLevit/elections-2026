@@ -208,13 +208,43 @@ begin
 end;
 $$;
 
+-- Participants of a league the caller belongs to: nickname + whether they
+-- submitted a bet. Intentionally does NOT expose bet content, so it is safe to
+-- call before the reveal date. SECURITY DEFINER is needed to read co-members'
+-- nicknames (profiles RLS is self-only) and submission status.
+create or replace function public.league_participants(target_league uuid)
+returns table (nickname text, has_submitted boolean, is_me boolean)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select
+    coalesce(nullif(btrim(p.nickname), ''), 'משתמש') as nickname,
+    exists (
+      select 1
+      from public.user_bets ub
+      where ub.league_id = target_league
+        and ub.user_id = lm.user_id
+        and ub.submitted_at is not null
+    ) as has_submitted,
+    (lm.user_id = (select auth.uid())) as is_me
+  from public.league_members lm
+  left join public.profiles p on p.id = lm.user_id
+  where lm.league_id = target_league
+    and public.is_league_member(target_league)
+  order by has_submitted desc, nickname;
+$$;
+
 revoke all on function public.handle_new_user() from public, anon, authenticated;
 revoke all on function public.is_league_member(uuid) from public, anon;
 revoke all on function public.create_league(text) from public, anon;
 revoke all on function public.join_league_by_code(text) from public, anon;
+revoke all on function public.league_participants(uuid) from public, anon;
 grant execute on function public.is_league_member(uuid) to authenticated;
 grant execute on function public.create_league(text) to authenticated;
 grant execute on function public.join_league_by_code(text) to authenticated;
+grant execute on function public.league_participants(uuid) to authenticated;
 
 revoke all on public.profiles, public.leagues, public.league_members,
   public.parties, public.user_bets, public.polls, public.election_results

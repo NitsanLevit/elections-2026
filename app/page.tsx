@@ -1,10 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, BarChart3, ChevronDown, Crown, Flame, Gauge, Lock, Medal, Search, ShieldCheck, Trophy, Wallet } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, BarChart3, Check, ChevronDown, Clock3, Crown, Flame, Gauge, Lock, Medal, Search, ShieldCheck, Trophy, Users, Wallet } from 'lucide-react';
 import AccountLeaguePanel from '@/components/account-league-panel';
+import { supabase } from '@/lib/supabase';
 import { mockParties } from '@/lib/mock-data';
 import type { Party, Poll } from '@/lib/types';
+
+type ActiveLeague = { id: string; name: string; invite_code: string };
+type Participant = { nickname: string; has_submitted: boolean; is_me: boolean };
+type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
 const TOTAL_SEATS = 120;
 const FALLBACK_LOCK_DATETIME = '2026-10-26T23:59:59+03:00';
@@ -50,6 +55,11 @@ export default function HomePage() {
     'הציבור החרדי': 0,
     'כחול לבן': 0,
   });
+  const [activeLeague, setActiveLeague] = useState<ActiveLeague | null>(null);
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [participantsLoading, setParticipantsLoading] = useState(false);
+  const [saveState, setSaveState] = useState<SaveState>('idle');
+  const [saveMessage, setSaveMessage] = useState('');
 
   const remaining = useMemo(
     () => TOTAL_SEATS - Object.values(bet).reduce((sum, value) => sum + value, 0),
@@ -121,7 +131,79 @@ export default function HomePage() {
     setBet((current) => ({ ...current, [partyName]: next }));
   };
 
-  const saveDisabled = remaining !== 0 || countdown.locked;
+  const loadParticipants = useCallback(async (leagueId: string) => {
+    if (!supabase) return;
+    setParticipantsLoading(true);
+    const { data, error } = await supabase.rpc('league_participants', { target_league: leagueId });
+    setParticipantsLoading(false);
+    if (!error) setParticipants((data ?? []) as Participant[]);
+  }, []);
+
+  useEffect(() => {
+    if (!activeLeague) {
+      setParticipants([]);
+      return;
+    }
+    void loadParticipants(activeLeague.id);
+  }, [activeLeague, loadParticipants]);
+
+  async function handleSaveBet() {
+    if (!supabase) {
+      setSaveState('error');
+      setSaveMessage('יש להגדיר את Supabase כדי לשמור הימור.');
+      return;
+    }
+    if (!activeLeague) {
+      setSaveState('error');
+      setSaveMessage('בחרי או צרי קבוצה בפאנל למעלה כדי לשמור את ההימור.');
+      return;
+    }
+
+    setSaveState('saving');
+    setSaveMessage('');
+
+    const { data: auth } = await supabase.auth.getUser();
+    const userId = auth.user?.id;
+    if (!userId) {
+      setSaveState('error');
+      setSaveMessage('צריך להתחבר לחשבון כדי לשמור הימור.');
+      return;
+    }
+
+    const submittedAt = new Date().toISOString();
+    // Update first (grants only allow updating bet_json/submitted_at), then
+    // insert when no row exists yet. Avoids an upsert touching protected columns.
+    const { data: updated, error: updateError } = await supabase
+      .from('user_bets')
+      .update({ bet_json: bet, submitted_at: submittedAt })
+      .eq('user_id', userId)
+      .eq('league_id', activeLeague.id)
+      .select('id');
+
+    if (updateError) {
+      setSaveState('error');
+      setSaveMessage(updateError.message);
+      return;
+    }
+
+    if (!updated || updated.length === 0) {
+      const { error: insertError } = await supabase
+        .from('user_bets')
+        .insert({ user_id: userId, league_id: activeLeague.id, bet_json: bet, submitted_at: submittedAt });
+      if (insertError) {
+        setSaveState('error');
+        setSaveMessage(insertError.message);
+        return;
+      }
+    }
+
+    setSaveState('saved');
+    setSaveMessage('ההימור נשמר ונשלח לקבוצה.');
+    void loadParticipants(activeLeague.id);
+  }
+
+  const submittedCount = participants.filter((participant) => participant.has_submitted).length;
+  const saveDisabled = remaining !== 0 || countdown.locked || saveState === 'saving';
   const lockLabel = countdown.locked ? 'ההימור נעול' : 'ההימור פתוח';
 
   return (
@@ -152,14 +234,14 @@ export default function HomePage() {
           </div>
         </header>
 
-        <AccountLeaguePanel />
+        <AccountLeaguePanel onActiveLeagueChange={setActiveLeague} />
 
         <div className="border-b border-blue-100 bg-white px-4 py-3">
           <div className="flex gap-2 overflow-x-auto pb-1">
             {[
               { key: 'bet', label: 'ההימור שלי', icon: Wallet },
               { key: 'polls', label: 'סקרים', icon: BarChart3 },
-              ...(revealGroupBets ? [{ key: 'group', label: 'ההימורים בקבוצה', icon: Trophy }] : []),
+              { key: 'group', label: 'הקבוצה', icon: Users },
               { key: 'admin', label: 'ניהול', icon: ShieldCheck },
             ].map(({ key, label, icon: Icon }) => (
               <button
@@ -236,12 +318,29 @@ export default function HomePage() {
             <button
               type="button"
               disabled={saveDisabled}
+              onClick={handleSaveBet}
               className={`w-full rounded-2xl px-4 py-3 text-base font-bold text-white transition ${
                 saveDisabled ? 'cursor-not-allowed bg-slate-300' : 'bg-gradient-to-r from-blue-900 to-cyan-700 hover:from-blue-800 hover:to-cyan-600'
               }`}
             >
-              {countdown.locked ? 'ההימור נעול - לא ניתן לעריכה' : 'שמור / שלח הימור'}
+              {countdown.locked
+                ? 'ההימור נעול - לא ניתן לעריכה'
+                : saveState === 'saving'
+                  ? 'שומר...'
+                  : 'שמור / שלח הימור'}
             </button>
+
+            {!activeLeague && !countdown.locked && (
+              <p className="text-center text-xs text-slate-500">כדי לשמור הימור, בחרי או צרי קבוצה בפאנל שלמעלה.</p>
+            )}
+            {saveMessage && (
+              <p role="status" className={`text-center text-xs ${saveState === 'error' ? 'text-red-700' : 'text-cyan-800'}`}>
+                {saveMessage}
+              </p>
+            )}
+            {remaining !== 0 && !countdown.locked && (
+              <p className="text-center text-xs text-amber-700">יש לחלק בדיוק 120 מנדטים לפני שמירה (נותרו {remaining}).</p>
+            )}
           </section>
         )}
 
@@ -422,17 +521,81 @@ export default function HomePage() {
 
         {activeTab === 'group' && (
           <section className="space-y-4 bg-sky-50 p-4">
-            <div className="rounded-2xl border border-blue-200 bg-white p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-sm font-bold text-slate-800">ההימורים בקבוצה</span>
-                <Trophy className="h-4 w-4 text-blue-700" />
+            {!activeLeague ? (
+              <div className="rounded-2xl border border-blue-200 bg-white p-4 text-sm text-slate-600">
+                בחרי או צרי קבוצה בפאנל שלמעלה כדי לראות את המשתתפים.
               </div>
-              <p className="text-sm text-slate-600">לאחר סגירת ההצבעה, כאן יוצגו כל ההימורים של חברי הקבוצה.</p>
-            </div>
+            ) : (
+              <>
+                <div className="rounded-2xl border border-blue-200 bg-white p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-sm font-bold text-slate-800">{activeLeague.name}</span>
+                    <Users className="h-4 w-4 text-blue-700" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-center">
+                    <div className="rounded-xl bg-sky-50 p-2">
+                      <div className="text-xl font-black text-blue-950">{participants.length}</div>
+                      <div className="text-[10px] text-slate-500">משתתפים בקבוצה</div>
+                    </div>
+                    <div className="rounded-xl bg-cyan-50 p-2">
+                      <div className="text-xl font-black text-cyan-900">{submittedCount}</div>
+                      <div className="text-[10px] text-slate-500">כבר מילאו הצבעה</div>
+                    </div>
+                  </div>
+                </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
-              נתוני ההימורים של חברי הקבוצה יוצגו כאן לאחר חיבור שמירת ההימורים.
-            </div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-sm font-bold text-slate-800">מי בקבוצה</span>
+                    <span className="text-[11px] text-slate-500">מוצג מי מילא הצבעה — לא מה הצביע</span>
+                  </div>
+                  {participantsLoading ? (
+                    <p className="py-2 text-sm text-slate-500">טוען משתתפים...</p>
+                  ) : participants.length === 0 ? (
+                    <p className="py-2 text-sm text-slate-500">עדיין אין משתתפים בקבוצה.</p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {participants.map((participant, index) => (
+                        <li
+                          key={`${participant.nickname}-${index}`}
+                          className={`flex items-center justify-between rounded-xl px-3 py-2 text-sm ${
+                            participant.is_me ? 'bg-blue-50 ring-1 ring-blue-100' : 'bg-slate-50'
+                          }`}
+                        >
+                          <span className="font-medium text-slate-800">
+                            {participant.nickname}
+                            {participant.is_me && <span className="mr-1 text-[11px] text-blue-700"> (את/ה)</span>}
+                          </span>
+                          {participant.has_submitted ? (
+                            <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
+                              <Check className="h-3.5 w-3.5" /> מילא/ה הצבעה
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1 text-[11px] text-slate-400">
+                              <Clock3 className="h-3.5 w-3.5" /> טרם מילא/ה
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
+                  {revealGroupBets ? (
+                    <span className="flex items-center gap-2">
+                      <Trophy className="h-4 w-4 text-blue-700" />
+                      ההצבעות נחשפו — תצוגת ההימורים המלאה של הקבוצה תתווסף כאן בשלב הבא.
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      <Lock className="h-4 w-4 text-slate-400" />
+                      ההצבעות של כולם ייחשפו ב-27.10. עד אז רואים רק מי כבר מילא.
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
           </section>
         )}
 

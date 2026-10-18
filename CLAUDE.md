@@ -190,13 +190,55 @@ server env), never in a `NEXT_PUBLIC_*` var.
    throws if it can't find the table or any valid row — treat a thrown scrape as
    "Wikipedia changed", and update `partyNames` / header checks.
 
-## 10. Good first tasks for an AI assistant here
+6. **`app/api/bet/route.ts` is a dead stub.** It echoes the body back with
+   "נשמר בהצלחה" but persists nothing. Bets are actually saved client-side in
+   `page.tsx` `handleSaveBet()` straight to Supabase (RLS enforces auth + lock).
+   Either delete this route or make it the real server-side path; don't trust it.
 
-- Wire up actual bet saving (the "שמור / שלח הימור" button → `user_bets`).
+## 10. Bets & group participation (implemented)
+
+- **Saving a bet:** `page.tsx` `handleSaveBet()` writes to `user_bets` with the
+  logged-in user's anon client (JWT), so **RLS** enforces membership + the lock
+  deadline. It does an UPDATE-then-INSERT (not upsert) because the column grants
+  only allow updating `bet_json` / `submitted_at` — an upsert would try to write
+  protected columns in its DO UPDATE and fail. Requires an active league
+  (selected in `AccountLeaguePanel`, reported up via `onActiveLeagueChange`) and
+  all 120 seats allocated.
+- **Participant list (#1):** the `group` tab (now always visible) calls the
+  `league_participants(target_league)` SQL function — a `SECURITY DEFINER`
+  function returning `{nickname, has_submitted, is_me}` for members of a league
+  the caller belongs to. It deliberately exposes **who submitted, not what they
+  voted**, so it is safe before the reveal date. Re-run this function in Supabase
+  (it's in `schema.sql`) for the feature to work.
+
+## 11. Election-day experience — planned wishlist (NOT built yet)
+
+The owner wants these for the election-day / results-waiting experience. Build
+them behind a local **preview/demo mode** (seeded mock participants + a mock
+final result, forced-revealed, gated by a query param / env so it never shows in
+production) so the UX can be approved before wiring to real data:
+
+- **Leaderboard** of participants by score (closeness of prediction to result).
+- **Prediction-vs-result graphs** per party (group/own average vs actual seats).
+- **Everyone's bets** table — revealed only after the reveal timestamp.
+- **Winner highlight + animation** to make the results reveal feel celebratory.
+- **Bloc breakdown pie charts** — Israel's two main blocs + the unaligned
+  parties; pie/donut charts showing how predicted seats split across each bloc.
+  (Before building charts, read the `dataviz` skill.)
+
+### Admin peek (#2) — decided, not built
+The league creator should be able to see everyone's bets **only after the
+betting lock** (not before), to preserve blind betting. Implement via an
+`is_league_owner()` SECURITY DEFINER check + a branch in the `user_bets` select
+policy gated on `statement_timestamp() >= lock`.
+
+## 12. Good first tasks for an AI assistant here
+
+- Build the election-day preview mode + the wishlist in §11.
 - Add a test / assertion that every party name in `mock-data.ts`, `schema.sql`,
   and the bet state matches a scraper output name (guards invariant in #2).
 - Implement the admin "update results" form (`election_results`) + scoring.
-- Populate the `group` tab from `user_bets` after the reveal timestamp.
+- Resolve the `app/api/bet` stub (delete or make real).
 ```
 
 > When you change poll logic, always run `npm run scrape -- --dry-run` and

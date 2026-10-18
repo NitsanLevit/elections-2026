@@ -13,7 +13,11 @@ type League = {
 
 type AuthMode = 'sign-in' | 'sign-up';
 
-export default function AccountLeaguePanel() {
+type AccountLeaguePanelProps = {
+  onActiveLeagueChange?: (league: League | null) => void;
+};
+
+export default function AccountLeaguePanel({ onActiveLeagueChange }: AccountLeaguePanelProps) {
   const [user, setUser] = useState<User | null>(null);
   const [leagues, setLeagues] = useState<League[]>([]);
   const [selectedLeagueId, setSelectedLeagueId] = useState('');
@@ -86,6 +90,11 @@ export default function AccountLeaguePanel() {
   }, [user, leagueRefresh]);
 
   const selectedLeague = leagues.find((league) => league.id === selectedLeagueId) ?? null;
+
+  useEffect(() => {
+    const active = leagues.find((league) => league.id === selectedLeagueId) ?? null;
+    onActiveLeagueChange?.(active);
+  }, [selectedLeagueId, leagues, onActiveLeagueChange]);
 
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
