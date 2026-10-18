@@ -41,6 +41,33 @@ function resolveLockDate() {
 
 const LOCK_DATE = resolveLockDate();
 
+// Build a suggested bet from the live poll averages, normalised to exactly
+// TOTAL_SEATS using the largest-remainder (Hamilton) method so the values stay
+// proportional to the averages shown on each card and still sum to 120.
+function buildSuggestedBet(aggregate: Record<string, number>): Record<string, number> {
+  const entries = Object.keys(DEFAULT_BET).map((name) => ({
+    name,
+    weight: typeof aggregate[name] === 'number' ? aggregate[name] : DEFAULT_BET[name],
+  }));
+  const totalWeight = entries.reduce((sum, item) => sum + item.weight, 0);
+  if (totalWeight <= 0) return { ...DEFAULT_BET };
+
+  const allocated = entries.map((item) => {
+    const raw = (item.weight / totalWeight) * TOTAL_SEATS;
+    const seats = Math.floor(raw);
+    return { name: item.name, seats, frac: raw - seats };
+  });
+
+  let remainder = TOTAL_SEATS - allocated.reduce((sum, item) => sum + item.seats, 0);
+  for (const item of [...allocated].sort((a, b) => b.frac - a.frac)) {
+    if (remainder <= 0) break;
+    item.seats += 1;
+    remainder -= 1;
+  }
+
+  return Object.fromEntries(allocated.map((item) => [item.name, item.seats]));
+}
+
 type TabKey = 'bet' | 'polls' | 'group' | 'admin';
 type FilterMode = 'poll' | 'source' | 'party';
 
@@ -62,11 +89,20 @@ export default function HomePage() {
   const [participantsLoading, setParticipantsLoading] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [saveMessage, setSaveMessage] = useState('');
+  const [betSource, setBetSource] = useState<'suggested' | 'saved' | 'editing'>('suggested');
 
   const remaining = useMemo(
     () => TOTAL_SEATS - Object.values(bet).reduce((sum, value) => sum + value, 0),
     [bet],
   );
+
+  const suggestedBet = useMemo(() => buildSuggestedBet(pollAggregate), [pollAggregate]);
+
+  // While the user hasn't loaded a saved bet or edited the form, keep the bet in
+  // sync with the poll-average suggestion (updates as live averages come in).
+  useEffect(() => {
+    if (betSource === 'suggested') setBet(suggestedBet);
+  }, [suggestedBet, betSource]);
 
   const belowThreshold = mockParties.filter((party) => party.thresholdRisk);
   const thresholdParties = mockParties.filter((party) => !party.thresholdRisk);
@@ -130,6 +166,7 @@ export default function HomePage() {
   const updateSeatValue = (partyName: string, value: number) => {
     const numericValue = Number.isFinite(value) ? value : 0;
     const next = Math.max(0, Math.min(TOTAL_SEATS, Math.round(numericValue)));
+    setBetSource('editing');
     setBet((current) => ({ ...current, [partyName]: next }));
   };
 
@@ -157,6 +194,7 @@ export default function HomePage() {
     if (error) return;
 
     if (data?.bet_json && typeof data.bet_json === 'object') {
+      setBetSource('saved');
       setBet({ ...DEFAULT_BET, ...(data.bet_json as Record<string, number>) });
       setSaveState('saved');
       setSaveMessage(
@@ -165,8 +203,9 @@ export default function HomePage() {
           : 'ההימור השמור שלך נטען.',
       );
     } else {
-      // No saved bet for this league yet — show the suggested default.
-      setBet(DEFAULT_BET);
+      // No saved bet for this league yet — fall back to the poll-average
+      // suggestion (the sync effect fills the form from suggestedBet).
+      setBetSource('suggested');
       setSaveState('idle');
       setSaveMessage('');
     }
@@ -175,7 +214,7 @@ export default function HomePage() {
   useEffect(() => {
     if (!activeLeague) {
       setParticipants([]);
-      setBet(DEFAULT_BET);
+      setBetSource('suggested');
       return;
     }
     void loadParticipants(activeLeague.id);
@@ -312,6 +351,12 @@ export default function HomePage() {
                 </p>
               )}
             </div>
+
+            {betSource !== 'saved' && (
+              <p className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] text-blue-800">
+                ההימור המוצע מבוסס על ממוצע הסקרים העדכני (מנורמל ל-120 מנדטים). אפשר לערוך לפני שמירה.
+              </p>
+            )}
 
             <div className="space-y-3">
               {thresholdParties.map((party) => (
