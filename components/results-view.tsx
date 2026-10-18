@@ -128,36 +128,68 @@ export default function ResultsView({ result, entries, isPreview }: ResultsViewP
         </div>
       </div>
 
-      {/* Everyone's bets */}
+      {/* Everyone's bets — comparison table */}
       <div className="rounded-2xl border border-blue-200 bg-white p-3">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-1 flex items-center justify-between">
           <span className="text-sm font-bold text-slate-800">ההצבעות של כולם</span>
           <Users className="h-4 w-4 text-blue-700" />
         </div>
-        <div className="space-y-3">
-          {ranked.map((entry) => {
-            const rows = Object.entries(entry.bet)
-              .filter(([, seats]) => seats > 0)
-              .sort((a, b) => b[1] - a[1]);
-            return (
-              <div key={`bets-${entry.nickname}-${entry.rank}`} className="rounded-xl border border-slate-200 p-2">
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-                    <RankBadge rank={entry.rank} />
-                    {entry.nickname}
-                  </span>
-                  <span className="text-xs font-bold text-blue-900">דיוק {entry.accuracy}%</span>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {rows.map(([party, seats]) => (
-                    <span key={party} className="rounded-lg bg-sky-50 px-2 py-1 text-[11px] text-slate-700">
-                      {party} <strong className="text-blue-900">{seats}</strong>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
+        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500">
+          <span>גללו לצדדים לכל המשתתפים</span>
+          <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-100" /> קרוב לתוצאה</span>
+          <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-red-50" /> רחוק</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="border-collapse text-xs">
+            <thead>
+              <tr className="text-slate-500">
+                <th className="sticky right-0 z-10 border-b border-slate-200 bg-white px-2 py-2 text-right font-semibold">מפלגה</th>
+                <th className="border-b border-slate-200 px-2 py-2 text-center font-bold text-blue-900">תוצאה</th>
+                {ranked.map((entry) => (
+                  <th key={`h-${entry.nickname}-${entry.rank}`} className="border-b border-slate-200 px-2 py-2 text-center font-semibold">
+                    <div className="flex items-center justify-center gap-1 whitespace-nowrap">
+                      <RankBadge rank={entry.rank} />
+                      {entry.nickname}
+                    </div>
+                    <div className="font-normal text-[10px] text-slate-400">{entry.accuracy}%</div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {partyOrder.map((row) => (
+                <tr key={`r-${row.name}`}>
+                  <th className="sticky right-0 z-10 border-b border-slate-100 bg-white px-2 py-1.5 text-right font-medium text-slate-700 whitespace-nowrap">
+                    {row.name}
+                  </th>
+                  <td className="border-b border-slate-100 px-2 py-1.5 text-center font-bold tabular-nums text-blue-900">
+                    {row.result}
+                  </td>
+                  {ranked.map((entry) => {
+                    const value = entry.bet[row.name] ?? 0;
+                    const diff = Math.abs(value - row.result);
+                    return (
+                      <td
+                        key={`c-${entry.nickname}-${row.name}`}
+                        className={`border-b border-slate-100 px-2 py-1.5 text-center tabular-nums text-slate-700 ${closenessClass(diff)}`}
+                      >
+                        {value}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+              <tr className="font-bold text-slate-800">
+                <th className="sticky right-0 z-10 bg-white px-2 py-2 text-right">סה״כ</th>
+                <td className="px-2 py-2 text-center tabular-nums">120</td>
+                {ranked.map((entry) => (
+                  <td key={`t-${entry.nickname}-${entry.rank}`} className="px-2 py-2 text-center tabular-nums">
+                    {Object.values(entry.bet).reduce((sum, seats) => sum + seats, 0)}
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -170,6 +202,14 @@ function RankBadge({ rank }: { rank: number }) {
     return <Medal className={`h-4 w-4 ${tone}`} aria-label={`מקום ${rank}`} />;
   }
   return <span className="w-4 text-center text-xs font-bold text-slate-500">{rank}</span>;
+}
+
+function closenessClass(diff: number): string {
+  if (diff === 0) return 'bg-emerald-100';
+  if (diff <= 1) return 'bg-emerald-50';
+  if (diff <= 3) return '';
+  if (diff <= 5) return 'bg-amber-50';
+  return 'bg-red-50';
 }
 
 function LegendDot({ color, label }: { color: string; label: string }) {
