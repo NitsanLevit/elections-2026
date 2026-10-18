@@ -11,6 +11,24 @@ type ActiveLeague = { id: string; name: string; invite_code: string };
 type Participant = { nickname: string; has_submitted: boolean; is_me: boolean };
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
+const DEFAULT_BET: Record<string, number> = {
+  'ישר!': 8,
+  'הליכוד': 32,
+  'ביחד': 12,
+  'ישראל ביתנו': 10,
+  'הדמוקרטים': 6,
+  'הרשימה המשותפת': 6,
+  'יהדות התורה': 8,
+  'ש"ס': 11,
+  'עוצמה יהודית': 8,
+  'הציונות הדתית וזהות': 9,
+  'רע"ם': 7,
+  'המילואימניקים והכלכלה החדשה': 3,
+  'עמך ישראל': 0,
+  'הציבור החרדי': 0,
+  'כחול לבן': 0,
+};
+
 const TOTAL_SEATS = 120;
 const FALLBACK_LOCK_DATETIME = '2026-10-26T23:59:59+03:00';
 
@@ -38,23 +56,7 @@ export default function HomePage() {
   const [pollSourceMode, setPollSourceMode] = useState<'stored' | 'live'>('live');
   const [pollsLoading, setPollsLoading] = useState(true);
   const [pollsError, setPollsError] = useState(false);
-  const [bet, setBet] = useState<Record<string, number>>({
-    'ישר!': 8,
-    'הליכוד': 32,
-    'ביחד': 12,
-    'ישראל ביתנו': 10,
-    'הדמוקרטים': 6,
-    'הרשימה המשותפת': 6,
-    'יהדות התורה': 8,
-    'ש"ס': 11,
-    'עוצמה יהודית': 8,
-    'הציונות הדתית וזהות': 9,
-    'רע"ם': 7,
-    'המילואימניקים והכלכלה החדשה': 3,
-    'עמך ישראל': 0,
-    'הציבור החרדי': 0,
-    'כחול לבן': 0,
-  });
+  const [bet, setBet] = useState<Record<string, number>>(DEFAULT_BET);
   const [activeLeague, setActiveLeague] = useState<ActiveLeague | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [participantsLoading, setParticipantsLoading] = useState(false);
@@ -139,13 +141,46 @@ export default function HomePage() {
     if (!error) setParticipants((data ?? []) as Participant[]);
   }, []);
 
+  const loadMyBet = useCallback(async (leagueId: string) => {
+    if (!supabase) return;
+    const { data: auth } = await supabase.auth.getUser();
+    const userId = auth.user?.id;
+    if (!userId) return;
+
+    const { data, error } = await supabase
+      .from('user_bets')
+      .select('bet_json, submitted_at')
+      .eq('user_id', userId)
+      .eq('league_id', leagueId)
+      .maybeSingle();
+
+    if (error) return;
+
+    if (data?.bet_json && typeof data.bet_json === 'object') {
+      setBet({ ...DEFAULT_BET, ...(data.bet_json as Record<string, number>) });
+      setSaveState('saved');
+      setSaveMessage(
+        data.submitted_at
+          ? `ההימור השמור שלך נטען (נשלח ${new Date(data.submitted_at).toLocaleString('he-IL')}).`
+          : 'ההימור השמור שלך נטען.',
+      );
+    } else {
+      // No saved bet for this league yet — show the suggested default.
+      setBet(DEFAULT_BET);
+      setSaveState('idle');
+      setSaveMessage('');
+    }
+  }, []);
+
   useEffect(() => {
     if (!activeLeague) {
       setParticipants([]);
+      setBet(DEFAULT_BET);
       return;
     }
     void loadParticipants(activeLeague.id);
-  }, [activeLeague, loadParticipants]);
+    void loadMyBet(activeLeague.id);
+  }, [activeLeague, loadParticipants, loadMyBet]);
 
   async function handleSaveBet() {
     if (!supabase) {
