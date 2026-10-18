@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, BarChart3, Check, ChevronDown, Clock3, Crown, Flame, Gauge, Lock, Medal, Search, ShieldCheck, Trophy, Users, Wallet } from 'lucide-react';
 import AccountLeaguePanel from '@/components/account-league-panel';
+import ResultsView from '@/components/results-view';
 import { supabase } from '@/lib/supabase';
 import { mockParties } from '@/lib/mock-data';
+import { mockFinalResult, mockGroupBets } from '@/lib/election-preview';
 import type { Party, Poll } from '@/lib/types';
 
 type ActiveLeague = { id: string; name: string; invite_code: string };
@@ -68,11 +70,12 @@ function buildSuggestedBet(aggregate: Record<string, number>): Record<string, nu
   return Object.fromEntries(allocated.map((item) => [item.name, item.seats]));
 }
 
-type TabKey = 'bet' | 'polls' | 'group' | 'admin';
+type TabKey = 'bet' | 'polls' | 'group' | 'results' | 'admin';
 type FilterMode = 'poll' | 'source' | 'party';
 
 export default function HomePage() {
   const [activeTab, setActiveTab] = useState<TabKey>('bet');
+  const [previewMode, setPreviewMode] = useState(false);
   const [expandedBelowThreshold, setExpandedBelowThreshold] = useState(true);
   const [filterMode, setFilterMode] = useState<FilterMode>('poll');
   const [selectedPollId, setSelectedPollId] = useState<string>('all');
@@ -103,6 +106,20 @@ export default function HomePage() {
   useEffect(() => {
     if (betSource === 'suggested') setBet(suggestedBet);
   }, [suggestedBet, betSource]);
+
+  // Local election-day preview (?preview=1): jump straight to the results tab.
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const on = params.get('preview') === '1' || process.env.NEXT_PUBLIC_PREVIEW_ELECTION === 'true';
+      if (on) {
+        setPreviewMode(true);
+        setActiveTab('results');
+      }
+    } catch {
+      /* window unavailable (SSR) — ignore */
+    }
+  }, []);
 
   const belowThreshold = mockParties.filter((party) => party.thresholdRisk);
   const thresholdParties = mockParties.filter((party) => !party.thresholdRisk);
@@ -316,6 +333,7 @@ export default function HomePage() {
               { key: 'bet', label: 'ההימור שלי', icon: Wallet },
               { key: 'polls', label: 'סקרים', icon: BarChart3 },
               { key: 'group', label: 'הקבוצה', icon: Users },
+              { key: 'results', label: 'תוצאות', icon: Trophy },
               { key: 'admin', label: 'ניהול', icon: ShieldCheck },
             ].map(({ key, label, icon: Icon }) => (
               <button
@@ -677,6 +695,25 @@ export default function HomePage() {
               </>
             )}
           </section>
+        )}
+
+        {activeTab === 'results' && (
+          previewMode ? (
+            <ResultsView result={mockFinalResult} entries={mockGroupBets} isPreview />
+          ) : (
+            <section className="space-y-4 bg-sky-50 p-4">
+              <div className="rounded-2xl border border-blue-200 bg-white p-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-sm font-bold text-slate-800">תוצאות</span>
+                  <Trophy className="h-4 w-4 text-blue-700" />
+                </div>
+                <p className="text-sm text-slate-600">
+                  עם סיום ספירת הקולות יוצגו כאן התוצאות הסופיות, טבלת המובילים, חלוקת הגושים
+                  והשוואת התחזיות של הקבוצה מול התוצאה האמיתית.
+                </p>
+              </div>
+            </section>
+          )
         )}
 
         {activeTab === 'admin' && (

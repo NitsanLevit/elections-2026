@@ -211,20 +211,28 @@ server env), never in a `NEXT_PUBLIC_*` var.
   voted**, so it is safe before the reveal date. Re-run this function in Supabase
   (it's in `schema.sql`) for the feature to work.
 
-## 11. Election-day experience — planned wishlist (NOT built yet)
+## 11. Election-day experience (preview mode — BUILT, not yet wired to real data)
 
-The owner wants these for the election-day / results-waiting experience. Build
-them behind a local **preview/demo mode** (seeded mock participants + a mock
-final result, forced-revealed, gated by a query param / env so it never shows in
-production) so the UX can be approved before wiring to real data:
+The `results` tab renders the full election-day screen via
+`components/results-view.tsx`: winner banner (animated), leaderboard (scored by
+total absolute deviation → accuracy %), bloc donut charts (result vs group
+average), prediction-vs-result bars per party, and everyone's bets.
 
-- **Leaderboard** of participants by score (closeness of prediction to result).
-- **Prediction-vs-result graphs** per party (group/own average vs actual seats).
-- **Everyone's bets** table — revealed only after the reveal timestamp.
-- **Winner highlight + animation** to make the results reveal feel celebratory.
-- **Bloc breakdown pie charts** — Israel's two main blocs + the unaligned
-  parties; pie/donut charts showing how predicted seats split across each bloc.
-  (Before building charts, read the `dataviz` skill.)
+- **How to see it:** open `http://localhost:3000/?preview=1` (or set
+  `NEXT_PUBLIC_PREVIEW_ELECTION=true`). Preview feeds `mockFinalResult` +
+  `mockGroupBets` from `lib/election-preview.ts` and jumps to the results tab.
+  Without preview, the results tab shows a "results pending" placeholder. The
+  preview flag is read client-side only, so it never affects real users.
+- **Bloc mapping** lives in `BLOCS` in `lib/election-preview.ts` (the one place
+  to edit political groupings): גוש נתניהו (Likud, Shas, UTJ, Otzma, RZP,
+  Amcha, Haredi Public), גוש השינוי (Yashar, Together, Democrats, Yisrael
+  Beiteinu, Reservists, Blue&White), מפלגות ערביות (Joint List, Ra'am). Any
+  unmapped party falls into a neutral "other" group. Colors are the dataviz
+  validated categorical slots (blue/orange/aqua) + muted gray for other.
+- **Charts** are inline SVG (no chart lib) following the `dataviz` skill.
+- **NOT wired to real data yet:** to go live, feed the real `election_results`
+  (official seats) + real `user_bets` with nicknames into `<ResultsView>` in
+  place of the mock data, and gate on the results-published / reveal state.
 
 ### Admin peek (#2) — decided, not built
 The league creator should be able to see everyone's bets **only after the
@@ -234,10 +242,11 @@ policy gated on `statement_timestamp() >= lock`.
 
 ## 12. Good first tasks for an AI assistant here
 
-- Build the election-day preview mode + the wishlist in §11.
+- Wire the results tab to real data (election_results + user_bets) — see §11.
 - Add a test / assertion that every party name in `mock-data.ts`, `schema.sql`,
-  and the bet state matches a scraper output name (guards invariant in #2).
+  the bet state, and `election-preview.ts` BLOCS matches a scraper output name.
 - Implement the admin "update results" form (`election_results`) + scoring.
+- Build the admin peek (#2) with the lock-gated owner policy below.
 - Resolve the `app/api/bet` stub (delete or make real).
 ```
 
