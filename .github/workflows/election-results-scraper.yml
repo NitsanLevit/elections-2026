@@ -1,0 +1,32 @@
+name: Election Result Scraper
+
+# Runs hourly on election day and the two days after, to capture exit polls and
+# the counted results into election_results. Also triggerable manually.
+# NOTE: the parser in scripts/result-source.mjs must be verified on election night
+# against the live Wikipedia page — the results table does not exist until then.
+on:
+  schedule:
+    - cron: '0 * 27-29 10 *'
+  workflow_dispatch:
+
+jobs:
+  scrape-results:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run result scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run scrape:results

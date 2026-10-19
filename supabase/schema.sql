@@ -66,6 +66,12 @@ create table if not exists public.election_results (
   updated_at timestamptz default now()
 );
 
+-- Election-day capture metadata (each hourly snapshot is a new row; the app reads
+-- the latest by updated_at). kind = 'sample' (exit poll) or 'official' (counted).
+alter table public.election_results add column if not exists kind text;
+alter table public.election_results add column if not exists source text;
+create index if not exists idx_election_results_updated on public.election_results(updated_at desc);
+
 create index if not exists idx_poll_date on public.polls(poll_date);
 create unique index if not exists idx_polls_source_key on public.polls(source_key);
 create index if not exists idx_league_members_league on public.league_members(league_id);

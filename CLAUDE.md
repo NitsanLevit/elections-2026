@@ -233,6 +233,24 @@ average), prediction-vs-result bars per party, and everyone's bets.
 - **NOT wired to real data yet:** to go live, feed the real `election_results`
   (official seats) + real `user_bets` with nicknames into `<ResultsView>` in
   place of the mock data, and gate on the results-published / reveal state.
+- **Excel export:** `lib/export-excel.ts` (SheetJS, lazy-loaded with the results
+  view) exports group bets and results/samples; filenames carry a timestamp so a
+  file reflects the data at the moment of export.
+
+### Election-day result scraper (SCAFFOLD — must be verified on election night)
+
+- `scripts/result-source.mjs` parses the English Wikipedia election article for
+  seats per party, tagged `sample` (exit poll) or `official` (counted).
+  `scripts/result-scraper.mjs` writes each capture as a new `election_results`
+  row (`kind`, `source`, `official_data`, `updated_at`); the app reads the
+  latest by `updated_at`. Run: `npm run scrape:results -- --dry-run`.
+- `.github/workflows/election-results-scraper.yml` runs it **hourly on 27-29
+  October** (needs the same Supabase Action secrets as the poll scraper).
+- ⚠️ The results/exit-poll tables don't exist until the vote, so the selectors
+  in `result-source.mjs` (`classifyTable`, `seatsColumnIndex`, `partyNames`) are
+  a best-effort guess and **must be checked against the live page on election
+  night** — before then the scraper intentionally exits 0 with "no results yet".
+  The manual admin entry (below) is the reliable fallback/primary.
 
 ### Admin peek (#2) — decided, not built
 The league creator should be able to see everyone's bets **only after the
