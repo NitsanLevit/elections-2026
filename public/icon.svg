@@ -1,5 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="120" fill="#0f172a"/>
-  <path d="M150 166h212v54H150zm0 78h212v54H150zm0 78h140v54H150z" fill="#f8fafc"/>
-  <path d="M340 154l40 60 40-60h-80zm0 100l40 60 40-60h-80zm0 100l40 60 40-60h-80z" fill="#fbbf24"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1a4d"/>
+      <stop offset="1" stop-color="#0e7490"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="120" fill="url(#bg)"/>
+  <!-- ascending mandate bars: white, with the leading bar in gold -->
+  <rect x="118" y="300" width="70" height="112" rx="18" fill="#f8fafc"/>
+  <rect x="221" y="232" width="70" height="180" rx="18" fill="#f8fafc"/>
+  <rect x="324" y="150" width="70" height="262" rx="18" fill="#fbbf24"/>
 </svg>
