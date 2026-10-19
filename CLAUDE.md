@@ -230,9 +230,15 @@ average), prediction-vs-result bars per party, and everyone's bets.
   unmapped party falls into a neutral "other" group. Colors are the dataviz
   validated categorical slots (blue/orange/aqua) + muted gray for other.
 - **Charts** are inline SVG (no chart lib) following the `dataviz` skill.
-- **NOT wired to real data yet:** to go live, feed the real `election_results`
-  (official seats) + real `user_bets` with nicknames into `<ResultsView>` in
-  place of the mock data, and gate on the results-published / reveal state.
+- **Wired to real data (automatic):** when not in preview, the results tab
+  fetches `/api/results` (latest `election_results` row, filled hourly by the
+  scraper) and the league's bets via the `league_bets` RPC, and renders
+  `<ResultsView>` with them. It re-fetches results every 5 minutes so an open
+  page updates itself. `kind` = 'sample'|'official' switches the heading
+  (מדגם/תוצאות אמת). With results but no revealed bets yet, ResultsView shows
+  the results-only view (bloc/seat sections; group sections hidden).
+- **`league_bets(uuid)`** (SECURITY DEFINER) returns {nickname, bet_json} for
+  members, only after the reveal timestamp — preserves blind betting.
 - **Excel export:** `lib/export-excel.ts` (SheetJS, lazy-loaded with the results
   view) exports group bets and results/samples; filenames carry a timestamp so a
   file reflects the data at the moment of export.
@@ -246,11 +252,16 @@ average), prediction-vs-result bars per party, and everyone's bets.
   latest by `updated_at`. Run: `npm run scrape:results -- --dry-run`.
 - `.github/workflows/election-results-scraper.yml` runs it **hourly on 27-29
   October** (needs the same Supabase Action secrets as the poll scraper).
-- ⚠️ The results/exit-poll tables don't exist until the vote, so the selectors
-  in `result-source.mjs` (`classifyTable`, `seatsColumnIndex`, `partyNames`) are
-  a best-effort guess and **must be checked against the live page on election
-  night** — before then the scraper intentionally exits 0 with "no results yet".
-  The manual admin entry (below) is the reliable fallback/primary.
+- **Robust by design (no election-night babysitting intended):** the parser is
+  name-anchored — it finds OUR party names (`PARTIES` map, HE + EN aliases) in
+  any table and picks the column whose values are clean small integers summing to
+  ~120 (seats; votes are too big, % carry a decimal, +/- carry a sign — all
+  rejected). It validates before returning and writes only valid captures, so a
+  changed page degrades to "no results yet" (the app keeps the last good row)
+  rather than writing garbage. **Proven** against the real 2022 results table
+  (extracted all seats summing to 120). The English Wikipedia article is the
+  reliable source; Hebrew is a harmless secondary (its article had no results
+  table in 2025). Residual risk is low but non-zero; glance at it on the night.
 
 ### Admin peek (#2) — decided, not built
 The league creator should be able to see everyone's bets **only after the

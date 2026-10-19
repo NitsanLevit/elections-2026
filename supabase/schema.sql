@@ -242,15 +242,40 @@ as $$
   order by has_submitted desc, nickname;
 $$;
 
+-- Everyone's bets in a league, with nicknames — for the election-day results
+-- screen. Gated on the reveal timestamp so it preserves blind betting (returns
+-- nothing before the reveal), and only to members. SECURITY DEFINER to read
+-- co-members' nicknames and bets.
+create or replace function public.league_bets(target_league uuid)
+returns table (nickname text, bet_json jsonb)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select
+    coalesce(nullif(btrim(p.nickname), ''), 'משתמש') as nickname,
+    ub.bet_json
+  from public.user_bets ub
+  left join public.profiles p on p.id = ub.user_id
+  where ub.league_id = target_league
+    and ub.submitted_at is not null
+    and public.is_league_member(target_league)
+    and statement_timestamp() >= '2026-10-27T08:00:00+03:00'::timestamptz
+  order by nickname;
+$$;
+
 revoke all on function public.handle_new_user() from public, anon, authenticated;
 revoke all on function public.is_league_member(uuid) from public, anon;
 revoke all on function public.create_league(text) from public, anon;
 revoke all on function public.join_league_by_code(text) from public, anon;
 revoke all on function public.league_participants(uuid) from public, anon;
+revoke all on function public.league_bets(uuid) from public, anon;
 grant execute on function public.is_league_member(uuid) to authenticated;
 grant execute on function public.create_league(text) to authenticated;
 grant execute on function public.join_league_by_code(text) to authenticated;
 grant execute on function public.league_participants(uuid) to authenticated;
+grant execute on function public.league_bets(uuid) to authenticated;
 
 revoke all on public.profiles, public.leagues, public.league_members,
   public.parties, public.user_bets, public.polls, public.election_results

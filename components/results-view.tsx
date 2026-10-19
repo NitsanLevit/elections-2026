@@ -20,6 +20,7 @@ type ResultsViewProps = {
   result: Record<string, number>;
   entries: GroupEntry[];
   updatedAt?: Date | string | null;
+  kind?: 'sample' | 'official' | string;
   isPreview?: boolean;
 };
 
@@ -29,7 +30,10 @@ function formatUpdated(value: Date | string): string {
   return date.toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
-export default function ResultsView({ result, entries, updatedAt, isPreview }: ResultsViewProps) {
+export default function ResultsView({ result, entries, updatedAt, kind, isPreview }: ResultsViewProps) {
+  const hasEntries = entries.length > 0;
+  const isSample = kind === 'sample';
+  const resultsTitle = isSample ? 'תוצאות מדגם' : 'תוצאות אמת';
   const ranked = rankEntries(entries, result);
   const winner = ranked[0] ?? null;
   const prediction = groupAverage(entries);
@@ -61,15 +65,16 @@ export default function ResultsView({ result, entries, updatedAt, isPreview }: R
       <div className="grid grid-cols-2 gap-2">
         <button
           type="button"
-          onClick={() => void exportResultsToExcel(result, { kind: isPreview ? 'תוצאות (דמה)' : 'תוצאות אמת', updatedAt })}
+          onClick={() => void exportResultsToExcel(result, { kind: isPreview ? `${resultsTitle} (דמה)` : resultsTitle, updatedAt })}
           className="flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-900"
         >
           <Download className="h-4 w-4" /> ייצוא תוצאות (Excel)
         </button>
         <button
           type="button"
+          disabled={!hasEntries}
           onClick={() => void exportBetsToExcel(entries, { result })}
-          className="flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-900"
+          className="flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-900 disabled:opacity-50"
         >
           <Download className="h-4 w-4" /> ייצוא הצבעות (Excel)
         </button>
@@ -78,11 +83,14 @@ export default function ResultsView({ result, entries, updatedAt, isPreview }: R
       {/* Real results (live) */}
       <div className="rounded-2xl border border-blue-200 bg-white p-3 shadow-card">
         <div className="mb-1 flex items-center justify-between">
-          <span className="text-sm font-bold text-slate-800">תוצאות אמת</span>
+          <span className="text-sm font-bold text-slate-800">{resultsTitle}</span>
           <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-600">
             <Radio className="h-3.5 w-3.5 animate-pulse" /> חי
           </span>
         </div>
+        {isSample && (
+          <p className="mb-1 text-[11px] font-medium text-amber-700">מדגם — הערכה ראשונית, לא תוצאה סופית.</p>
+        )}
         {updatedAt && (
           <p className="mb-3 text-[11px] text-slate-500">עודכן לאחרונה: {formatUpdated(updatedAt)}</p>
         )}
@@ -130,6 +138,7 @@ export default function ResultsView({ result, entries, updatedAt, isPreview }: R
       )}
 
       {/* Leaderboard */}
+      {hasEntries && (
       <div className="rounded-2xl border border-blue-200 bg-white p-3">
         <div className="mb-3 flex items-center justify-between">
           <span className="text-sm font-bold text-slate-800">טבלת מובילים</span>
@@ -158,6 +167,7 @@ export default function ResultsView({ result, entries, updatedAt, isPreview }: R
           ))}
         </ul>
       </div>
+      )}
 
       {/* Bloc pies */}
       <div className="rounded-2xl border border-blue-200 bg-white p-3">
@@ -165,13 +175,15 @@ export default function ResultsView({ result, entries, updatedAt, isPreview }: R
           <span className="text-sm font-bold text-slate-800">חלוקת הגושים</span>
           <PieChart className="h-4 w-4 text-blue-700" />
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className={`grid gap-3 ${hasEntries ? 'grid-cols-2' : 'grid-cols-1'}`}>
           <BlocDonut title="תוצאה אמיתית" blocs={resultBlocs} />
-          <BlocDonut title="ממוצע הקבוצה" blocs={predictionBlocs} />
+          {hasEntries && <BlocDonut title="ממוצע הקבוצה" blocs={predictionBlocs} />}
         </div>
         <BlocLegend blocs={resultBlocs} />
       </div>
 
+      {hasEntries && (
+        <>
       {/* Prediction vs result bars */}
       <div className="rounded-2xl border border-blue-200 bg-white p-3">
         <div className="mb-1 flex items-center justify-between">
@@ -264,6 +276,8 @@ export default function ResultsView({ result, entries, updatedAt, isPreview }: R
           </table>
         </div>
       </div>
+        </>
+      )}
     </section>
   );
 }

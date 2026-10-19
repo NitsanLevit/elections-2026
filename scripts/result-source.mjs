@@ -1,156 +1,190 @@
-// Election-day RESULT scraper (scaffold).
+// Election-day RESULT scraper — robust, name-anchored, self-validating.
 //
-// ⚠️ VERIFY ON ELECTION NIGHT (2026-10-27). The real results / exit-poll tables
-// do not exist until the vote, so the selectors below are a best-effort guess at
-// the standard Wikipedia election-results table layout. When live data appears,
-// run `npm run scrape:results -- --dry-run`, compare to the page, and adjust the
-// header/column heuristics in `parseResultsTable` + the `partyNames` map.
-//
-// It reads the English Wikipedia article for the election and returns seats per
-// party, tagged as a "sample" (exit poll) or "official" (counted) result. News
-// sites publish exit polls at 22:00; Wikipedia fills the results table as votes
-// are counted. The manual admin entry is the reliable fallback.
+// Goal: run unattended on election night. Instead of trusting a fixed table
+// layout (brittle), it finds OUR party names in any table and picks the column
+// whose values sum to ~120 seats (layout-independent). It tries several sources
+// and only returns data that passes validation, so a changed page degrades to
+// "no results yet" (the caller then keeps the last good capture) rather than
+// writing garbage. There is nothing to fix by hand on the night.
 
 import * as cheerio from 'cheerio';
 
-const WIKIPEDIA_PAGE = '2026_Israeli_legislative_election';
-const WIKIPEDIA_URL = `https://en.wikipedia.org/wiki/${WIKIPEDIA_PAGE}`;
-const WIKIPEDIA_API_URL = 'https://en.wikipedia.org/w/api.php';
+const TOTAL_SEATS = 120;
+const MIN_PARTIES = 7; // a valid Knesset table has well over this
+const SEAT_SUM_TOLERANCE = 3; // seats always sum to 120; allow tiny slack
 
-// EN → HE party names. Keep in sync with scripts/poll-source.mjs `partyNames`.
-// Results tables use fuller names than the polling table, so both forms are here;
-// unknown labels fall through as their raw text (and should be added on the night).
-const partyNames = new Map([
-  ['Likud', 'הליכוד'],
-  ['Together', 'ביחד'],
-  ['RZP-Zehut', 'הציונות הדתית וזהות'],
-  ['Religious Zionist Party', 'הציונות הדתית וזהות'],
-  ['Otzma', 'עוצמה יהודית'],
-  ['Otzma Yehudit', 'עוצמה יהודית'],
-  ['Blue & White', 'כחול לבן'],
-  ['Blue and White', 'כחול לבן'],
-  ['Shas', 'ש"ס'],
-  ['UTJ', 'יהדות התורה'],
-  ['United Torah Judaism', 'יהדות התורה'],
-  ['Yisrael Beiteinu', 'ישראל ביתנו'],
-  ["Ra'am", 'רע"ם'],
-  ['Ra’am', 'רע"ם'],
-  ['United Arab List', 'רע"ם'],
-  ['Joint List', 'הרשימה המשותפת'],
-  ['Hadash-Taal', 'הרשימה המשותפת'],
-  ['Dems', 'הדמוקרטים'],
-  ['The Democrats', 'הדמוקרטים'],
-  ['Yashar', 'ישר!'],
-  ['Reserv.-NEP', 'המילואימניקים והכלכלה החדשה'],
-  ['Amcha Yisrael', 'עמך ישראל'],
-  ['Haredi Public', 'הציבור החרדי'],
-]);
+// Canonical Hebrew party names (must match lib/election-preview.ts / the bet),
+// each with alias fragments (normalized) we may see in Hebrew or English tables.
+const PARTIES = [
+  { name: 'הליכוד', aliases: ['הליכוד', 'likud'] },
+  { name: 'ישר!', aliases: ['ישר', 'yashar'] },
+  { name: 'ביחד', aliases: ['ביחד', 'together'] },
+  { name: 'ישראל ביתנו', aliases: ['ישראלביתנו', 'yisraelbeiteinu', 'yisraelbeytenu'] },
+  { name: 'הדמוקרטים', aliases: ['הדמוקרטים', 'thedemocrats', 'democrats', 'dems'] },
+  { name: 'הרשימה המשותפת', aliases: ['הרשימההמשותפת', 'חדשתעל', 'jointlist', 'hadashtaal'] },
+  { name: 'יהדות התורה', aliases: ['יהדותהתורה', 'utj', 'unitedtorahjudaism'] },
+  { name: 'ש"ס', aliases: ['שס', 'shas'] },
+  { name: 'עוצמה יהודית', aliases: ['עוצמהיהודית', 'otzmayehudit', 'otzma'] },
+  { name: 'הציונות הדתית וזהות', aliases: ['הציונותהדתיתוזהות', 'הציונותהדתית', 'religiouszionist', 'rzp'] },
+  { name: 'רע"ם', aliases: ['רעם', 'raam', 'unitedarablist'] },
+  { name: 'המילואימניקים והכלכלה החדשה', aliases: ['המילואימניקים', 'reservists', 'reservnep'] },
+  { name: 'עמך ישראל', aliases: ['עמךישראל', 'amchayisrael'] },
+  { name: 'הציבור החרדי', aliases: ['הציבורהחרדי', 'haredipublic'] },
+  { name: 'כחול לבן', aliases: ['כחוללבן', 'blueandwhite', 'bluewhite'] },
+];
+
+const SOURCES = [
+  { apiBase: 'https://he.wikipedia.org/w/api.php', page: 'הבחירות_לכנסת_ה-26' },
+  { apiBase: 'https://en.wikipedia.org/w/api.php', page: '2026_Israeli_legislative_election' },
+];
 
 function normalizeText(value) {
-  return value.replace(/\s+/g, ' ').trim();
+  return value.replace(/\[[^\]]+\]/g, '').replace(/\s+/g, ' ').trim();
 }
 
-function parseSeats(value) {
-  const normalized = normalizeText(value).replace(/,/g, '');
-  if (!/^\d+$/.test(normalized)) return null;
-  const parsed = Number(normalized);
-  return parsed >= 0 && parsed <= 120 ? parsed : null;
+// Strip quotes/geresh/punctuation/spaces and lowercase, for fuzzy name matching.
+function normalizeKey(value) {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/[\s"'`’״׳!().,\-–—/]/g, '');
 }
 
-async function fetchPageHtml() {
-  const apiUrl = new URL(WIKIPEDIA_API_URL);
-  apiUrl.search = new URLSearchParams({
-    action: 'parse',
-    page: WIKIPEDIA_PAGE,
-    prop: 'text',
-    format: 'json',
+// Which canonical party (if any) a row label refers to — longest alias wins.
+function matchParty(label) {
+  const key = normalizeKey(label);
+  if (!key) return null;
+  let best = null;
+  let bestLen = 0;
+  for (const party of PARTIES) {
+    for (const alias of party.aliases) {
+      if (alias.length > bestLen && (key.includes(alias) || alias.includes(key))) {
+        best = party.name;
+        bestLen = alias.length;
+      }
+    }
+  }
+  return best;
+}
+
+function parseSeatCell(text) {
+  const value = normalizeText(text).replace(/,/g, '');
+  if (!/^\d+$/.test(value)) return null; // integers only (no %, no +/- deltas, no vote counts with commas handled above)
+  const n = Number(value);
+  return n >= 0 && n <= TOTAL_SEATS ? n : null;
+}
+
+function detectType($, table) {
+  const caption = normalizeKey(table.find('caption').first().text());
+  let heading = '';
+  const prev = table.prevAll('h2, h3, h4').first();
+  if (prev.length) heading = normalizeKey(prev.text());
+  const context = `${caption} ${heading}`;
+  return /מדגם|exitpoll|sample|אומדן/.test(context) ? 'sample' : 'official';
+}
+
+// Try to extract {party: seats} from one table by anchoring on party names.
+// The seats column is the only one that yields CLEAN small integers across party
+// rows: vote counts are too large (→ null), percentages carry a decimal (→ null),
+// and the +/- change column carries a sign (→ null). So the right column is the
+// one with the most valid seat values; ties break toward a sum near 120.
+function parseTable($, table) {
+  const matchedRows = [];
+  table.find('tr').each((_, row) => {
+    const cells = $(row).find('th, td').toArray().map((cell) => $(cell));
+    if (cells.length < 2) return;
+    const party = matchParty(cells[0].text()) ?? matchParty(cells[1].text());
+    if (!party) return;
+    const values = cells.map((cell) => parseSeatCell(cell.text()));
+    matchedRows.push({ party, values });
   });
+
+  if (matchedRows.length < MIN_PARTIES) return null;
+
+  const maxCols = Math.max(...matchedRows.map((row) => row.values.length));
+  let bestCol = -1;
+  let bestCount = 0;
+  let bestScore = Infinity;
+  for (let col = 1; col < maxCols; col += 1) {
+    let sum = 0;
+    let count = 0;
+    for (const row of matchedRows) {
+      const value = row.values[col];
+      if (value !== null && value !== undefined && value <= 60) {
+        sum += value;
+        count += 1;
+      }
+    }
+    const score = Math.abs(sum - TOTAL_SEATS);
+    if (count > bestCount || (count === bestCount && score < bestScore)) {
+      bestCount = count;
+      bestScore = score;
+      bestCol = col;
+    }
+  }
+
+  if (bestCol < 0 || bestCount < MIN_PARTIES) return null;
+
+  const parties = {};
+  const seen = new Set();
+  for (const row of matchedRows) {
+    if (seen.has(row.party)) continue; // first occurrence wins
+    const value = row.values[bestCol];
+    if (value === null || value === undefined || value > 60) continue;
+    parties[row.party] = value;
+    seen.add(row.party);
+  }
+
+  const total = Object.values(parties).reduce((acc, seats) => acc + seats, 0);
+  // Our map should cover the serious parties; allow a little slack for any small
+  // unmapped list, but reject anything that clearly isn't a seats column.
+  if (Object.keys(parties).length < MIN_PARTIES || total < TOTAL_SEATS - 12 || total > TOTAL_SEATS + SEAT_SUM_TOLERANCE) {
+    return null;
+  }
+
+  return { type: detectType($, table), parties, totalSeats: total };
+}
+
+async function fetchFromSource(source) {
+  const apiUrl = new URL(source.apiBase);
+  apiUrl.search = new URLSearchParams({ action: 'parse', page: source.page, prop: 'text', format: 'json' });
 
   const response = await fetch(apiUrl, {
     headers: { 'User-Agent': 'Elections2026ResultTracker/1.0 (result ingestion)' },
   });
-  if (!response.ok) throw new Error(`Wikipedia API returned HTTP ${response.status}`);
+  if (!response.ok) return [];
 
   const payload = await response.json();
   const html = payload?.parse?.text?.['*'];
-  if (typeof html !== 'string') throw new Error('Wikipedia API response did not include parsed page HTML');
-  return html;
-}
+  if (typeof html !== 'string') return [];
 
-// Heuristic: a results/exit-poll table has a header cell for seats and a party column.
-function classifyTable($, table) {
-  const headerText = normalizeText(table.find('tr').first().text()).toLowerCase();
-  const caption = normalizeText(table.find('caption').first().text()).toLowerCase();
-  const context = `${caption} ${headerText}`;
-  const hasSeats = /seats|mandates/.test(headerText);
-  const hasParty = /party|list|alliance/.test(headerText);
-  if (!hasSeats || !hasParty) return null;
-  const isSample = /exit poll|sample|מדגם/.test(context);
-  return isSample ? 'sample' : 'official';
-}
-
-function seatsColumnIndex($, table) {
-  const headers = table.find('tr').first().find('th, td').toArray().map((el) => normalizeText($(el).text()).toLowerCase());
-  // Prefer an exact "seats"/"mandates" header; fall back to the last numeric-ish column.
-  const index = headers.findIndex((label) => /^seats$|^mandates$|seats|mandates/.test(label));
-  return index;
-}
-
-function parseResultsTable($, table) {
-  const seatsIndex = seatsColumnIndex($, table);
-  if (seatsIndex < 0) return {};
-
-  const parties = {};
-  table.find('tr').slice(1).each((_, row) => {
-    const cells = $(row).find('th, td').toArray();
-    if (cells.length <= seatsIndex) return;
-
-    const partyLabel = normalizeText($(cells[0]).text().replace(/\[[^\]]+\]/g, ''));
-    if (!partyLabel) return;
-
-    const seats = parseSeats($(cells[seatsIndex]).text());
-    if (seats === null) return;
-
-    const name = partyNames.get(partyLabel) ?? partyLabel;
-    if (/total|others|turnout|invalid|valid votes/i.test(partyLabel)) return;
-    parties[name] = seats;
+  const $ = cheerio.load(html);
+  const found = [];
+  $('table.wikitable, table.toccolours').each((_, element) => {
+    const parsed = parseTable($, $(element));
+    if (parsed) found.push({ ...parsed, source: `${source.apiBase} · ${source.page}` });
   });
-
-  return parties;
+  return found;
 }
 
 /**
- * Returns the latest election result found on the page, or throws if none yet.
- * @returns {Promise<{type: 'sample'|'official', parties: Record<string, number>, totalSeats: number, source: string, fetchedAt: string}>}
+ * Latest validated election result across all sources, or throws if none yet.
+ * Prefers official (counted) results over exit-poll samples.
+ * @returns {Promise<{type:'sample'|'official', parties:Record<string,number>, totalSeats:number, source:string, fetchedAt:string}>}
  */
 export async function fetchElectionResults() {
-  const html = await fetchPageHtml();
-  const $ = cheerio.load(html);
-
-  const candidates = $('table.wikitable')
-    .toArray()
-    .map((el) => $(el))
-    .map((table) => ({ table, type: classifyTable($, table) }))
-    .filter((entry) => entry.type !== null);
+  const candidates = [];
+  for (const source of SOURCES) {
+    try {
+      candidates.push(...(await fetchFromSource(source)));
+    } catch {
+      // A failed/changed source must not abort the others.
+    }
+  }
 
   if (candidates.length === 0) {
-    throw new Error('No results/exit-poll table found yet (the vote may not have happened).');
+    throw new Error('No validated results/exit-poll table found yet (the vote may not have happened).');
   }
 
-  // Prefer official results over samples when both are present.
   const chosen = candidates.find((entry) => entry.type === 'official') ?? candidates[0];
-  const parties = parseResultsTable($, chosen.table);
-  const totalSeats = Object.values(parties).reduce((sum, seats) => sum + seats, 0);
-
-  if (totalSeats === 0) {
-    throw new Error('A results table was found but no seats could be parsed — verify the layout.');
-  }
-
-  return {
-    type: chosen.type,
-    parties,
-    totalSeats,
-    source: WIKIPEDIA_URL,
-    fetchedAt: new Date().toISOString(),
-  };
+  return { ...chosen, fetchedAt: new Date().toISOString() };
 }

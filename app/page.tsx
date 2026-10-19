@@ -96,6 +96,10 @@ export default function HomePage() {
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [saveMessage, setSaveMessage] = useState('');
   const [betSource, setBetSource] = useState<'suggested' | 'saved' | 'editing'>('suggested');
+  const [realResult, setRealResult] = useState<Record<string, number> | null>(null);
+  const [realKind, setRealKind] = useState<'sample' | 'official' | string>('official');
+  const [realUpdatedAt, setRealUpdatedAt] = useState<string | null>(null);
+  const [leagueBets, setLeagueBets] = useState<{ nickname: string; bet: Record<string, number> }[]>([]);
 
   const remaining = useMemo(
     () => TOTAL_SEATS - Object.values(bet).reduce((sum, value) => sum + value, 0),
@@ -198,6 +202,38 @@ export default function HomePage() {
     if (!error) setParticipants((data ?? []) as Participant[]);
   }, []);
 
+  // Latest captured election result (filled hourly by the result scraper).
+  const loadResults = useCallback(async () => {
+    try {
+      const response = await fetch('/api/results');
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data?.result) {
+        setRealResult(data.result as Record<string, number>);
+        setRealKind((data.kind as string) ?? 'official');
+        setRealUpdatedAt((data.updatedAt as string) ?? null);
+      }
+    } catch {
+      /* ignore transient fetch errors */
+    }
+  }, []);
+
+  // Everyone's bets in the league (returned only after the reveal time).
+  const loadLeagueBets = useCallback(async (leagueId: string) => {
+    if (!supabase) return;
+    const { data, error } = await supabase.rpc('league_bets', { target_league: leagueId });
+    if (error || !Array.isArray(data)) {
+      setLeagueBets([]);
+      return;
+    }
+    setLeagueBets(
+      (data as { nickname: string; bet_json: Record<string, number> }[]).map((row) => ({
+        nickname: row.nickname,
+        bet: row.bet_json ?? {},
+      })),
+    );
+  }, []);
+
   const loadMyBet = useCallback(async (leagueId: string) => {
     if (!supabase) return;
     const { data: auth } = await supabase.auth.getUser();
@@ -234,12 +270,22 @@ export default function HomePage() {
   useEffect(() => {
     if (!activeLeague) {
       setParticipants([]);
+      setLeagueBets([]);
       setBetSource('suggested');
       return;
     }
     void loadParticipants(activeLeague.id);
     void loadMyBet(activeLeague.id);
-  }, [activeLeague, loadParticipants, loadMyBet]);
+    void loadLeagueBets(activeLeague.id);
+  }, [activeLeague, loadParticipants, loadMyBet, loadLeagueBets]);
+
+  // Poll the latest results on election day so an open page updates on its own.
+  useEffect(() => {
+    if (previewMode) return;
+    void loadResults();
+    const intervalId = window.setInterval(() => void loadResults(), 5 * 60 * 1000);
+    return () => window.clearInterval(intervalId);
+  }, [previewMode, loadResults]);
 
   async function handleSaveBet() {
     if (!supabase) {
@@ -703,6 +749,8 @@ export default function HomePage() {
         {activeTab === 'results' && (
           previewMode ? (
             <ResultsView result={mockFinalResult} entries={mockGroupBets} updatedAt={new Date()} isPreview />
+          ) : realResult ? (
+            <ResultsView result={realResult} entries={leagueBets} updatedAt={realUpdatedAt} kind={realKind} />
           ) : (
             <section className="space-y-4 bg-sky-50 p-4">
               <div className="rounded-2xl border border-blue-200 bg-white p-4">
@@ -711,8 +759,9 @@ export default function HomePage() {
                   <Trophy className="h-4 w-4 text-blue-700" />
                 </div>
                 <p className="text-sm text-slate-600">
-                  עם סיום ספירת הקולות יוצגו כאן התוצאות הסופיות, טבלת המובילים, חלוקת הגושים
-                  והשוואת התחזיות של הקבוצה מול התוצאה האמיתית.
+                  התוצאות ייקלטו אוטומטית בליל הבחירות — מדגמים מ-22:00 ואז תוצאות האמת — ויתעדכנו
+                  כאן מעצמן כל שעה. יוצגו טבלת המובילים, חלוקת הגושים, והשוואת התחזיות של הקבוצה מול
+                  התוצאה.
                 </p>
               </div>
             </section>
