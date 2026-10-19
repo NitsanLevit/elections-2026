@@ -339,11 +339,11 @@ function BlocDonut({ title, blocs, size = 132, stroke = 26 }: { title: string; b
               dominantBaseline="central"
               className="fill-white text-[12px] font-black"
             >
-              {seg.seats}
+              {Math.round(seg.seats)}
             </text>
           ))}
         <text x={center} y={center} textAnchor="middle" dominantBaseline="central" className="fill-slate-800 text-[15px] font-black">
-          {total}
+          {Math.round(total)}
         </text>
       </svg>
       <figcaption className="mt-1 text-[11px] font-medium text-slate-600">{title}</figcaption>
