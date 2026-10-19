@@ -1,6 +1,6 @@
 'use client';
 
-import { BarChart3, Crown, Medal, PieChart, Radio, Trophy, Users } from 'lucide-react';
+import { BarChart3, Crown, Download, Medal, PieChart, Radio, Trophy, Users } from 'lucide-react';
 import {
   aggregateByBloc,
   blocColor,
@@ -10,6 +10,7 @@ import {
   type BlocTotals,
   type GroupEntry,
 } from '@/lib/election-preview';
+import { exportBetsToExcel, exportResultsToExcel } from '@/lib/export-excel';
 
 // dataviz: slot 1 (blue) = the real result, slot 2 (orange) = the prediction.
 const RESULT_COLOR = '#2a78d6';
@@ -55,6 +56,24 @@ export default function ResultsView({ result, entries, updatedAt, isPreview }: R
           מצב תצוגה מקדימה — נתוני דמה להדגמת מסך יום הבחירות. לא נתונים אמיתיים.
         </div>
       )}
+
+      {/* Excel exports (reflect the data at the moment of export) */}
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => void exportResultsToExcel(result, { kind: isPreview ? 'תוצאות (דמה)' : 'תוצאות אמת', updatedAt })}
+          className="flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-900"
+        >
+          <Download className="h-4 w-4" /> ייצוא תוצאות (Excel)
+        </button>
+        <button
+          type="button"
+          onClick={() => void exportBetsToExcel(entries, { result })}
+          className="flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-900"
+        >
+          <Download className="h-4 w-4" /> ייצוא הצבעות (Excel)
+        </button>
+      </div>
 
       {/* Real results (live) */}
       <div className="rounded-2xl border border-blue-200 bg-white p-3 shadow-card">

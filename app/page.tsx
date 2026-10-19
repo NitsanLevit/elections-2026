@@ -1,13 +1,16 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { AlertTriangle, BarChart3, Check, ChevronDown, Clock3, Crown, Flame, Gauge, Lock, Medal, Search, ShieldCheck, Trophy, Users, Wallet } from 'lucide-react';
 import AccountLeaguePanel from '@/components/account-league-panel';
-import ResultsView from '@/components/results-view';
 import { supabase } from '@/lib/supabase';
 import { mockParties } from '@/lib/mock-data';
 import { mockFinalResult, mockGroupBets } from '@/lib/election-preview';
 import type { Party, Poll } from '@/lib/types';
+
+// Lazy-load the results view (and its xlsx dependency) only when needed.
+const ResultsView = dynamic(() => import('@/components/results-view'), { ssr: false });
 
 type ActiveLeague = { id: string; name: string; invite_code: string };
 type Participant = { nickname: string; has_submitted: boolean; is_me: boolean };

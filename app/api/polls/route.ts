@@ -6,6 +6,11 @@ import type { Poll, PollParty, ScrapedPoll } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
+// Parties within a poll, ordered by seats (desc); "not published" (null) last.
+function sortParties(parties: PollParty[]): PollParty[] {
+  return [...parties].sort((a, b) => (b.seats ?? -1) - (a.seats ?? -1));
+}
+
 const getCachedRecentPolls = unstable_cache(
   async () => ({ polls: await fetchRecentPolls(), fetchedAt: new Date().toISOString() }),
   ['recent-wikipedia-polls'],
@@ -54,7 +59,7 @@ export async function GET() {
           sampleSize: rawData.sampleSize,
           sourceUrl: rawData.sourceUrl,
           lastChecked: rawData.fetchedAt,
-          parties: rawData.parties,
+          parties: sortParties(rawData.parties),
         }];
       });
 
@@ -64,16 +69,18 @@ export async function GET() {
 
   if (polls.length === 0) {
     const { polls: recentPolls, fetchedAt } = await getCachedRecentPolls();
-    polls = recentPolls.map((poll: ScrapedPoll) => ({
-      id: poll.sourceKey,
-      source: poll.source,
-      date: poll.date.split('-').reverse().join('.'),
-      pollingFirm: poll.rawData.pollingFirm,
-      sampleSize: poll.rawData.sampleSize,
-      sourceUrl: poll.rawData.sourceUrl,
-      lastChecked: fetchedAt,
-      parties: poll.rawData.parties,
-    }));
+    polls = [...recentPolls]
+      .sort((a: ScrapedPoll, b: ScrapedPoll) => b.date.localeCompare(a.date)) // newest first
+      .map((poll: ScrapedPoll) => ({
+        id: poll.sourceKey,
+        source: poll.source,
+        date: poll.date.split('-').reverse().join('.'),
+        pollingFirm: poll.rawData.pollingFirm,
+        sampleSize: poll.rawData.sampleSize,
+        sourceUrl: poll.rawData.sourceUrl,
+        lastChecked: fetchedAt,
+        parties: sortParties(poll.rawData.parties),
+      }));
   }
 
   const totals = new Map<string, { sum: number; count: number }>();
