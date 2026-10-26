@@ -10,3 +10,5 @@ npm-debug.log*
 .DS_Store
 coverage
 *.tsbuildinfo
+# Admin data exports (contain members' names/emails/bets)
+data-export_*.xlsx
