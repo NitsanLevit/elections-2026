@@ -135,11 +135,14 @@ function parseTable($, table) {
   }
 
   const total = Object.values(parties).reduce((acc, seats) => acc + seats, 0);
-  // Our map should cover the serious parties; allow a little slack for any small
-  // unmapped list, but reject anything that clearly isn't a seats column.
-  if (Object.keys(parties).length < MIN_PARTIES || total < TOTAL_SEATS - 12 || total > TOTAL_SEATS + SEAT_SUM_TOLERANCE) {
-    return null;
-  }
+  // Guard against historical / outgoing-Knesset tables (e.g. the 2022 results,
+  // which sum to ≠120 under our map and never contain Yashar, a 2026-only party).
+  // Accept only a full 120-seat allocation OR a table that contains ישר! — a
+  // strong signal it is really the 2026 ballot — within a sane seat range.
+  const hasYashar = parties['ישר!'] !== undefined;
+  const sane = total >= TOTAL_SEATS - 20 && total <= TOTAL_SEATS + SEAT_SUM_TOLERANCE;
+  if (Object.keys(parties).length < MIN_PARTIES || !sane) return null;
+  if (total !== TOTAL_SEATS && !hasYashar) return null;
 
   return { type: detectType($, table), parties, totalSeats: total };
 }
