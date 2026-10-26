@@ -9,7 +9,8 @@
     "lint": "next lint",
     "scrape": "node scripts/scraper.mjs",
     "scrape:results": "node scripts/result-scraper.mjs",
-    "export": "node scripts/export-data.mjs"
+    "export": "node scripts/export-data.mjs",
+    "votes": "node scripts/show-votes.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.3",
