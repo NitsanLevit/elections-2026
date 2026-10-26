@@ -8,7 +8,8 @@
     "start": "node -e \"process.env.HOSTNAME='0.0.0.0'; require('./.next/standalone/server.js')\"",
     "lint": "next lint",
     "scrape": "node scripts/scraper.mjs",
-    "scrape:results": "node scripts/result-scraper.mjs"
+    "scrape:results": "node scripts/result-scraper.mjs",
+    "export": "node scripts/export-data.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.3",
